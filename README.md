@@ -1,17 +1,26 @@
-# jol
+# JOL
 
-A new Flutter project.
+A Flutter app for discovering and hosting events in Cape Town.
 
-## Getting Started
+## Run locally
 
-This project is a starting point for a Flutter application.
+```shell
+flutter pub get
+flutter run
+```
 
-A few resources to get you started if this is your first Flutter project:
+The app opens with the JOL splash screen, followed by welcome, sign-up, and
+login. Choose **Look around first** to enter the five-tab shell without signing
+in. The theme button switches between dark and light mode.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Sign-up and login currently provide client-side form validation only. They do
+not send verification codes or create accounts; connect them to the existing
+authentication API once its base URL, auth method, and endpoint documentation
+are available.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Tests
+
+```shell
+flutter analyze
+flutter test
+```
