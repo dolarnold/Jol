@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 enum AttendeeSearchTab { all, events, organisers, people }
 
+enum AppAccessMode { attendee, host, staff }
+
 enum MockPaymentOutcome { success, declined, pending }
 
 @immutable
@@ -36,6 +38,7 @@ class AttendeeState {
     this.contributionAmount = 100,
     this.contributionAnonymous = false,
     this.isOffline = false,
+    this.accessMode = AppAccessMode.attendee,
   });
 
   final DateTime? selectedDate;
@@ -66,6 +69,7 @@ class AttendeeState {
   final int contributionAmount;
   final bool contributionAnonymous;
   final bool isOffline;
+  final AppAccessMode accessMode;
 
   AttendeeState copyWith({
     DateTime? selectedDate,
@@ -97,6 +101,7 @@ class AttendeeState {
     int? contributionAmount,
     bool? contributionAnonymous,
     bool? isOffline,
+    AppAccessMode? accessMode,
   }) {
     return AttendeeState(
       selectedDate: clearSelectedDate
@@ -118,8 +123,7 @@ class AttendeeState {
       savedEvents: savedEvents ?? this.savedEvents,
       joinedGuestlists: joinedGuestlists ?? this.joinedGuestlists,
       rsvpEvents: rsvpEvents ?? this.rsvpEvents,
-      privacyPublicProfile:
-          privacyPublicProfile ?? this.privacyPublicProfile,
+      privacyPublicProfile: privacyPublicProfile ?? this.privacyPublicProfile,
       privacyGuestlists: privacyGuestlists ?? this.privacyGuestlists,
       privacyAttending: privacyAttending ?? this.privacyAttending,
       ticketIndex: ticketIndex ?? this.ticketIndex,
@@ -131,24 +135,20 @@ class AttendeeState {
       contributionAnonymous:
           contributionAnonymous ?? this.contributionAnonymous,
       isOffline: isOffline ?? this.isOffline,
+      accessMode: accessMode ?? this.accessMode,
     );
   }
 }
 
 final attendeeControllerProvider =
-    NotifierProvider<AttendeeController, AttendeeState>(
-  AttendeeController.new,
-);
+    NotifierProvider<AttendeeController, AttendeeState>(AttendeeController.new);
 
 class AttendeeController extends Notifier<AttendeeState> {
   @override
   AttendeeState build() => const AttendeeState();
 
   void setDate(DateTime? date) {
-    state = state.copyWith(
-      selectedDate: date,
-      clearSelectedDate: date == null,
-    );
+    state = state.copyWith(selectedDate: date, clearSelectedDate: date == null);
   }
 
   void setLocation(String location) {
@@ -199,10 +199,7 @@ class AttendeeController extends Notifier<AttendeeState> {
   }
 
   void verifyStudent(String email) {
-    state = state.copyWith(
-      isStudentVerified: true,
-      studentEmail: email.trim(),
-    );
+    state = state.copyWith(isStudentVerified: true, studentEmail: email.trim());
   }
 
   void toggleFollowOrganiser(String organiser) {
@@ -257,8 +254,10 @@ class AttendeeController extends Notifier<AttendeeState> {
 
   void transferTicket(String ticketId) {
     state = state.copyWith(
-      transferredTickets:
-          Set.unmodifiable({...state.transferredTickets, ticketId}),
+      transferredTickets: Set.unmodifiable({
+        ...state.transferredTickets,
+        ticketId,
+      }),
     );
   }
 
@@ -270,16 +269,20 @@ class AttendeeController extends Notifier<AttendeeState> {
     state = state.copyWith(contributionAnonymous: value);
   }
 
-  void setPrivacy({
-    bool? publicProfile,
-    bool? guestlists,
-    bool? attending,
-  }) {
+  void setPrivacy({bool? publicProfile, bool? guestlists, bool? attending}) {
     state = state.copyWith(
       privacyPublicProfile: publicProfile,
       privacyGuestlists: guestlists,
       privacyAttending: attending,
     );
+  }
+
+  void resetSession() {
+    state = const AttendeeState();
+  }
+
+  void setAccessMode(AppAccessMode mode) {
+    state = state.copyWith(accessMode: mode);
   }
 
   void setOffline(bool value) {

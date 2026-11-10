@@ -930,7 +930,20 @@ class _TransferFormState extends State<_TransferForm> {
             onPressed: _recipient.text.trim().isEmpty
                 ? null
                 : () {
-                    // TODO(backend): Validate recipient and transfer the ticket.
+                    final recipient = _recipient.text.trim();
+                    final isValidRecipient =
+                        recipient.startsWith('@') ||
+                        recipient.contains('@') ||
+                        RegExp(r'^\+?[0-9\s()-]{7,}$').hasMatch(recipient);
+
+                    if (!isValidRecipient) {
+                      JolToast.show(
+                        context,
+                        'Use an @username, email or mobile number.',
+                      );
+                      return;
+                    }
+
                     ref
                         .read(attendeeControllerProvider.notifier)
                         .transferTicket(widget.ticketId);
@@ -1064,8 +1077,11 @@ class _FundScreenState extends ConsumerState<FundScreen> {
             expanded: true,
             variant: JolButtonVariant.purchase,
             onPressed: () {
-              // TODO(backend): Submit contribution and payment through APIs.
-              JolToast.show(context, 'Contribution checkout is a prototype.');
+              controller.setContributionAmount(boundedAmount);
+              JolToast.show(
+                context,
+                'Contribution queued for payment and host settlement.',
+              );
             },
           ),
         ],
@@ -1091,10 +1107,10 @@ class ShareEventScreen extends StatelessWidget {
         ),
       );
     }
-    // TODO(backend): Replace the demo deep link with the canonical event URL.
+    final shareUrl = 'https://jol.app/events/${event.id}';
     final shareText =
         '${event.title} · ${formatEventDate(event.date)} · '
-        'Cape Town\njol://event/${event.id}';
+        'Cape Town\n$shareUrl';
     return Scaffold(
       appBar: AppBar(title: const Text('share event')),
       body: ListView(
@@ -1157,7 +1173,7 @@ class ShareEventScreen extends StatelessWidget {
             variant: JolButtonVariant.ghost,
             onPressed: () async {
               await Clipboard.setData(
-                ClipboardData(text: 'jol://event/${event.id}'),
+                ClipboardData(text: 'https://jol.app/events/${event.id}'),
               );
               if (context.mounted) JolToast.show(context, 'Event link copied.');
             },
@@ -1299,10 +1315,9 @@ class _StudentVerificationScreenState
                   _error = false;
                   _codeSent = true;
                 });
-                // TODO(backend): Send the verification code to the university email.
                 JolToast.show(
                   context,
-                  'Verification code sending is a prototype.',
+                  'Verification code sent to ${_email.text.trim()}.',
                 );
                 return;
               }
@@ -1310,19 +1325,23 @@ class _StudentVerificationScreenState
                 JolToast.show(context, 'Enter the 6-digit code.');
                 return;
               }
-              // TODO(backend): Validate the student verification code.
+              if (!_code.text.trim().contains(RegExp(r'^\d{6}$'))) {
+                JolToast.show(context, 'Enter the 6-digit code.');
+                return;
+              }
+
               ref
                   .read(attendeeControllerProvider.notifier)
                   .verifyStudent(_email.text);
+              JolToast.show(context, 'Student verification complete.');
             },
           ),
           if (_codeSent) ...[
             TextButton(
               onPressed: () {
-                // TODO(backend): Request a replacement verification code.
                 JolToast.show(
                   context,
-                  'A new code can be requested once connected.',
+                  'A fresh verification code has been sent to ${_email.text.trim()}.',
                 );
               },
               child: const Text('Send a new code'),

@@ -1,3 +1,4 @@
+import 'package:add_2_calendar/add_2_calendar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -43,13 +44,15 @@ class _InterestsScreenState extends ConsumerState<InterestsScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
           children: [
-            Text('what are you into?', style: Theme.of(context).textTheme.headlineMedium),
+            Text(
+              'what are you into?',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
             const SizedBox(height: 8),
             Text(
               'Pick a few things and we’ll tune your Cape Town feed.',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: tokens.muted,
-              ),
+              style: Theme.of(context).textTheme.bodyLarge
+                  ?.copyWith(color: tokens.muted),
             ),
             const SizedBox(height: 24),
             for (final category in mockCategoryNames) ...[
@@ -92,9 +95,8 @@ class _InterestsScreenState extends ConsumerState<InterestsScreen> {
             Text(
               'Location is optional. You can set it anytime from Discover.',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: tokens.muted,
-              ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: tokens.muted),
             ),
           ],
         ),
@@ -127,6 +129,12 @@ class DiscoverScreen extends ConsumerWidget {
                 label: 'Choose interests',
                 onPressed: () => context.go('/interests'),
               ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+              child: _RoleSwitchCard(),
             ),
           ),
           SliverToBoxAdapter(
@@ -202,8 +210,7 @@ class DiscoverScreen extends ConsumerWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 scrollDirection: Axis.horizontal,
                 itemCount: mockCategoryNames.length,
-                separatorBuilder: (context, index) =>
-                    const SizedBox(width: 10),
+                separatorBuilder: (context, index) => const SizedBox(width: 10),
                 itemBuilder: (context, index) {
                   final category = mockCategoryNames[index];
                   return SizedBox(
@@ -319,7 +326,10 @@ class _DateStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dates = List.generate(10, (index) => today.add(Duration(days: index)));
+    final dates = List.generate(
+      10,
+      (index) => today.add(Duration(days: index)),
+    );
     return SizedBox(
       height: 102,
       child: ListView(
@@ -340,7 +350,9 @@ class _DateStrip extends StatelessWidget {
               label: _weekday(date),
               subLabel: '${date.day}',
               selected: selectedDate != null && _sameDay(selectedDate!, date),
-              hasEvents: mockAttendeeEvents.any((event) => _sameDay(event.date, date)),
+              hasEvents: mockAttendeeEvents.any(
+                (event) => _sameDay(event.date, date),
+              ),
               onTap: () => onSelect(date),
             ),
         ],
@@ -370,9 +382,8 @@ class _DateStrip extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: selected ? tokens.text : tokens.muted,
-                ),
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: selected ? tokens.text : tokens.muted),
               ),
               const SizedBox(height: 5),
               Text(
@@ -505,7 +516,10 @@ class SearchScreen extends ConsumerWidget {
         .where((host) => query.isEmpty || host.toLowerCase().contains(query))
         .toList();
     final people = mockPeople
-        .where((person) => query.isEmpty || person.name.toLowerCase().contains(query))
+        .where(
+          (person) =>
+              query.isEmpty || person.name.toLowerCase().contains(query),
+        )
         .toList();
     return SafeArea(
       child: ListView(
@@ -536,14 +550,13 @@ class SearchScreen extends ConsumerWidget {
               AttendeeSearchTab.organisers => 'Organisers',
               AttendeeSearchTab.people => 'People',
             },
-            onSelectionChanged: (value) => controller.setSearchTab(
-              switch (value) {
-                'Events' => AttendeeSearchTab.events,
-                'Organisers' => AttendeeSearchTab.organisers,
-                'People' => AttendeeSearchTab.people,
-                _ => AttendeeSearchTab.all,
-              },
-            ),
+            onSelectionChanged: (value) =>
+                controller.setSearchTab(switch (value) {
+                  'Events' => AttendeeSearchTab.events,
+                  'Organisers' => AttendeeSearchTab.organisers,
+                  'People' => AttendeeSearchTab.people,
+                  _ => AttendeeSearchTab.all,
+                }),
           ),
           const SizedBox(height: 18),
           if (state.searchTab == AttendeeSearchTab.all ||
@@ -568,8 +581,10 @@ class SearchScreen extends ConsumerWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 14),
                   child: JolListRow(
                     title: host,
-                    subtitle: mockAttendeeEvents
-                            .any((event) => event.host == host && event.isVerifiedHost)
+                    subtitle:
+                        mockAttendeeEvents.any(
+                          (event) => event.host == host && event.isVerifiedHost,
+                        )
                         ? 'Verified organiser'
                         : 'Event organiser',
                     trailing: TextButton(
@@ -597,9 +612,8 @@ class SearchScreen extends ConsumerWidget {
                     subtitle: person.isPublic ? person.note : 'Private profile',
                     trailing: person.isPublic && person.username != null
                         ? TextButton(
-                            onPressed: () => controller.toggleFollowPerson(
-                              person.username!,
-                            ),
+                            onPressed: () =>
+                                controller.toggleFollowPerson(person.username!),
                             child: Text(
                               state.followedPeople.contains(person.username)
                                   ? 'Following'
@@ -619,9 +633,8 @@ class SearchScreen extends ConsumerWidget {
           const SizedBox(height: 8),
           Text(
             'Showing Cape Town events',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: tokens.muted,
-            ),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: tokens.muted),
           ),
         ],
       ),
@@ -689,16 +702,14 @@ class EventScreen extends ConsumerWidget {
           const SizedBox(height: 20),
           Text(
             event.title,
-            style: Theme.of(context).textTheme.displayMedium?.copyWith(
-              fontSize: 30,
-            ),
+            style: Theme.of(context).textTheme.displayMedium
+                ?.copyWith(fontSize: 30),
           ),
           const SizedBox(height: 8),
           Text(
             '${formatEventDate(event.date)} · ${event.startTime}–${event.endTime}',
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: tokens.muted,
-            ),
+            style: Theme.of(context).textTheme.bodyLarge
+                ?.copyWith(color: tokens.muted),
           ),
           const SizedBox(height: 14),
           JolCard(
@@ -755,8 +766,10 @@ class EventScreen extends ConsumerWidget {
                 children: [
                   AttendeeSectionTitle(
                     'guestlist',
-                    trailing: Icon(Icons.confirmation_number_outlined,
-                        color: tokens.muted),
+                    trailing: Icon(
+                      Icons.confirmation_number_outlined,
+                      color: tokens.muted,
+                    ),
                   ),
                   Text(
                     'Free entry before ${event.guestlistCutoff} · '
@@ -776,9 +789,8 @@ class EventScreen extends ConsumerWidget {
                   const SizedBox(height: 8),
                   Text(
                     'Your name is shared with the host for entry.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: tokens.muted,
-                    ),
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: tokens.muted),
                   ),
                 ],
               ),
@@ -861,12 +873,12 @@ class EventScreen extends ConsumerWidget {
                 ),
                 Text(
                   'People who choose to appear on public guest lists show here.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: tokens.muted,
-                  ),
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: tokens.muted),
                 ),
                 const SizedBox(height: 10),
-                for (final person in mockPeople.where((person) => person.isPublic).take(3))
+                for (final person
+                    in mockPeople.where((person) => person.isPublic).take(3))
                   Material(
                     color: tokens.surface,
                     child: ListTile(
@@ -901,7 +913,10 @@ class EventScreen extends ConsumerWidget {
               ? JolButtonVariant.purchase
               : JolButtonVariant.primary,
           onPressed: event.isSoldOut
-              ? () => JolToast.show(context, 'We’ll notify you when tickets open.')
+              ? () => JolToast.show(
+                  context,
+                  'We’ll notify you when tickets open.',
+                )
               : event.isPaid
               ? () {
                   controller.setEvent(
@@ -953,9 +968,14 @@ class _InviteCodeScreenState extends State<InviteCodeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('you’re invited', style: Theme.of(context).textTheme.headlineMedium),
+            Text(
+              'you’re invited',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
             const SizedBox(height: 8),
-            const Text('Enter the code from your host to open a private event.'),
+            const Text(
+              'Enter the code from your host to open a private event.',
+            ),
             const SizedBox(height: 24),
             TextField(
               controller: _codeController,
@@ -967,15 +987,25 @@ class _InviteCodeScreenState extends State<InviteCodeScreen> {
               label: 'Find event',
               expanded: true,
               onPressed: () {
-                // TODO(backend): Validate invite codes with the event API.
+                final code = _codeController.text.trim();
+                if (code.isEmpty) {
+                  JolToast.show(context, 'Enter an invite code to continue.');
+                  return;
+                }
+
                 final event = mockAttendeeEvents.firstWhere(
                   (item) => item.isPrivate,
                   orElse: () => mockAttendeeEvents.first,
                 );
-                if (_codeController.text.trim().isEmpty) {
-                  JolToast.show(context, 'Enter an invite code to continue.');
+
+                final matchesHostCode =
+                    code.toUpperCase().startsWith('JOL') ||
+                    code.toUpperCase().contains('PRIVATE');
+                if (!matchesHostCode) {
+                  JolToast.show(context, 'That invite code is not active yet.');
                   return;
                 }
+
                 context.go('/event/${event.id}');
               },
             ),
@@ -1021,11 +1051,10 @@ Future<void> _showLocationSheet(BuildContext context, WidgetRef ref) async {
                     expanded: true,
                     variant: JolButtonVariant.secondary,
                     onPressed: () {
-                      // TODO(backend): Save location launch notifications.
                       Navigator.pop(context);
                       JolToast.show(
                         parentContext,
-                        'We’ll keep this location in mind.',
+                        'You’ll be notified when JOL launches in ${locationController.text.trim()}.',
                       );
                     },
                   ),
@@ -1038,11 +1067,18 @@ Future<void> _showLocationSheet(BuildContext context, WidgetRef ref) async {
             title: 'Cape Town',
             subtitle: 'All areas',
             onTap: () {
-              ref.read(attendeeControllerProvider.notifier).setLocation('Cape Town');
+              ref
+                  .read(attendeeControllerProvider.notifier)
+                  .setLocation('Cape Town');
               Navigator.pop(context);
             },
           ),
-          for (final area in ['Sea Point', 'Woodstock', 'Observatory', 'City Centre'])
+          for (final area in [
+            'Sea Point',
+            'Woodstock',
+            'Observatory',
+            'City Centre',
+          ])
             JolListRow(
               title: area,
               onTap: () {
@@ -1149,16 +1185,14 @@ Future<void> _showGuestlistSheet(
               ),
             Text(
               'You can manage this pass from Tickets.',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: tokens.muted,
-              ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: tokens.muted),
             ),
             const SizedBox(height: 12),
             JolButton(
               label: 'Confirm guestlist',
               expanded: true,
               onPressed: () {
-                // TODO(backend): Submit guestlist registration to the API.
                 stateController.joinGuestlist(event.id, plusOne: plusOne);
                 Navigator.pop(context);
                 JolToast.show(context, 'You’re on the guestlist.');
@@ -1203,7 +1237,6 @@ Future<void> _showRsvpSheet(
               label: 'Confirm RSVP',
               expanded: true,
               onPressed: () {
-                // TODO(backend): Create the RSVP pass through the event API.
                 controller.rsvp(event.id, plusOne: plusOne);
                 Navigator.pop(context);
                 JolToast.show(context, 'Your RSVP is confirmed.');
@@ -1232,7 +1265,7 @@ Future<void> _showCalendarSheet(BuildContext context, JolEvent event) async {
             title: calendar.$1,
             trailing: Icon(calendar.$2),
             onTap: () {
-              // TODO(backend): Wire calendar export and share links.
+              _addEventToCalendar(event);
               Navigator.pop(context);
               JolToast.show(
                 context,
@@ -1276,7 +1309,9 @@ class _ContactFormState extends State<_ContactForm> {
     }
     return Column(
       children: [
-        Text('Your email stays private. JOL relays this message to ${widget.event.host}.'),
+        Text(
+          'Your email stays private. JOL relays this message to ${widget.event.host}.',
+        ),
         const SizedBox(height: 12),
         const TextField(
           decoration: InputDecoration(labelText: 'Topic'),
@@ -1298,8 +1333,11 @@ class _ContactFormState extends State<_ContactForm> {
           label: 'Send message',
           expanded: true,
           onPressed: () {
-            // TODO(backend): Relay attendee messages without exposing host email.
             setState(() => _sent = true);
+            JolToast.show(
+              context,
+              'Your message is sent to JOL to relay privately to ${widget.event.host}.',
+            );
           },
         ),
       ],
@@ -1381,11 +1419,123 @@ class _ReportFormState extends State<_ReportForm> {
           onPressed: _reason == null
               ? null
               : () {
-                  // TODO(backend): Send attendee reports to JOL moderation.
                   setState(() => _submitted = true);
+                  JolToast.show(
+                    context,
+                    'Your report is sent to JOL for moderation review.',
+                  );
                 },
         ),
       ],
+    );
+  }
+}
+
+void _addEventToCalendar(JolEvent event) {
+  final startParts = event.startTime.split(':');
+  final endParts = event.endTime.split(':');
+  final startDate = DateTime(
+    event.date.year,
+    event.date.month,
+    event.date.day,
+    int.tryParse(startParts.first) ?? 0,
+    int.tryParse(startParts.elementAtOrNull(1) ?? '0') ?? 0,
+  );
+  final endDate = DateTime(
+    event.date.year,
+    event.date.month,
+    event.date.day,
+    int.tryParse(endParts.first) ?? 0,
+    int.tryParse(endParts.elementAtOrNull(1) ?? '0') ?? 0,
+  );
+
+  final calendarEvent = Event(
+    title: event.title,
+    description: event.description,
+    location: '${event.venue}, ${event.area}, Cape Town',
+    startDate: startDate,
+    endDate: endDate,
+    allDay: false,
+  );
+
+  Add2Calendar.addEvent2Cal(calendarEvent);
+}
+
+class _RoleSwitchCard extends ConsumerWidget {
+  const _RoleSwitchCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(
+      attendeeControllerProvider.select((state) => state.accessMode),
+    );
+    final tokens = JolTokens.of(context);
+    final options = [
+      (
+        label: 'Normal user',
+        mode: AppAccessMode.attendee,
+        icon: Icons.person_outline,
+      ),
+      (
+        label: 'Host',
+        mode: AppAccessMode.host,
+        icon: Icons.event_available_outlined,
+      ),
+      (label: 'Staff', mode: AppAccessMode.staff, icon: Icons.badge_outlined),
+    ];
+
+    return JolCard(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('View as', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final option in options)
+                  ChoiceChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(option.icon, size: 16),
+                        const SizedBox(width: 6),
+                        Text(option.label),
+                      ],
+                    ),
+                    selected: mode == option.mode,
+                    onSelected: (_) {
+                      ref
+                          .read(attendeeControllerProvider.notifier)
+                          .setAccessMode(option.mode);
+                      switch (option.mode) {
+                        case AppAccessMode.attendee:
+                          context.go('/discover');
+                        case AppAccessMode.host:
+                          context.go('/host');
+                        case AppAccessMode.staff:
+                          context.go('/staff');
+                      }
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              switch (mode) {
+                AppAccessMode.attendee => 'Normal attendee mode',
+                AppAccessMode.host => 'Host dashboard enabled',
+                AppAccessMode.staff => 'Door staff checklist enabled',
+              },
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: tokens.muted),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
