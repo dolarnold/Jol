@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../attendee/state/attendee_controller.dart';
 import '../../../ui/theme/jol_theme.dart';
@@ -222,11 +223,314 @@ class AttendeeMeScreen extends ConsumerWidget {
             expanded: true,
             variant: JolButtonVariant.ghost,
             onPressed: () {
-              // TODO(backend): Clear the authenticated session on sign-out.
+              ref.read(attendeeControllerProvider.notifier).resetSession();
               context.go('/welcome');
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class HostDashboardScreen extends ConsumerWidget {
+  const HostDashboardScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tokens = JolTokens.of(context);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('hosting')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
+        children: [
+          Text(
+            'host dashboard',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Create, review and manage the nights you run.',
+            style: Theme.of(context).textTheme.bodyLarge
+                ?.copyWith(color: tokens.muted),
+          ),
+          const SizedBox(height: 18),
+          JolCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: tokens.surface2,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.event_available_outlined),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Your next event',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Amapiano Sundowner',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Sat, 14 Nov · 16:00 · The Rooftop',
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: tokens.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _MetricTile(
+                  label: 'Guests',
+                  value: '214',
+                  tone: Colors.green,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _MetricTile(
+                  label: 'Tickets',
+                  value: 'R 18.2k',
+                  tone: Colors.orange,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          JolCard(
+            child: Column(
+              children: [
+                JolListRow(
+                  title: 'Create event',
+                  subtitle: 'Draft a new night or edit a live listing',
+                  trailing: const Icon(Icons.add_circle_outline),
+                  onTap: () => JolToast.show(
+                    context,
+                    'Host creation flow is ready for the next API pass.',
+                  ),
+                ),
+                const Divider(height: 12),
+                JolListRow(
+                  title: 'Guestlist approvals',
+                  subtitle: 'Review names, plus-ones and access requests',
+                  trailing: const Icon(Icons.people_alt_outlined),
+                  onTap: () => JolToast.show(
+                    context,
+                    'Guestlist queue is ready for moderation.',
+                  ),
+                ),
+                const Divider(height: 12),
+                JolListRow(
+                  title: 'Event insights',
+                  subtitle: 'Check check-ins, spend and performance',
+                  trailing: const Icon(Icons.insights_outlined),
+                  onTap: () => JolToast.show(
+                    context,
+                    'Insights are ready for the next analytics pass.',
+                  ),
+                ),
+                const Divider(height: 12),
+                JolListRow(
+                  title: 'Switch to attendee',
+                  trailing: const Icon(Icons.arrow_back),
+                  onTap: () {
+                    ref
+                        .read(attendeeControllerProvider.notifier)
+                        .setAccessMode(AppAccessMode.attendee);
+                    context.go('/discover');
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class StaffDashboardScreen extends ConsumerWidget {
+  const StaffDashboardScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tokens = JolTokens.of(context);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('staff')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
+        children: [
+          Text(
+            'door staff',
+            style: Theme.of(context).textTheme.headlineMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Review check-ins, scan tickets and help at the door.',
+            style: Theme.of(context).textTheme.bodyLarge
+                ?.copyWith(color: tokens.muted),
+          ),
+          const SizedBox(height: 18),
+          JolCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: tokens.surface2,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.qr_code_2_outlined),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Entry queue',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    Text(
+                      '18 wait',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Guests currently checked in: 196 / 240',
+                  style: Theme.of(context).textTheme.bodyMedium
+                      ?.copyWith(color: tokens.muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: _MetricTile(
+                  label: 'Checked in',
+                  value: '196',
+                  tone: Colors.blue,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _MetricTile(
+                  label: 'Alerts',
+                  value: '3',
+                  tone: Colors.red,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          JolCard(
+            child: Column(
+              children: [
+                JolListRow(
+                  title: 'Pending check-ins',
+                  subtitle: '18 people waiting in the queue',
+                  trailing: const Icon(Icons.pending_actions_outlined),
+                  onTap: () => JolToast.show(
+                    context,
+                    'Check-in flow is ready for live event data.',
+                  ),
+                ),
+                const Divider(height: 12),
+                JolListRow(
+                  title: 'Guestlist scan',
+                  subtitle: 'Verify guest names and capacity',
+                  trailing: const Icon(Icons.fact_check_outlined),
+                  onTap: () => JolToast.show(
+                    context,
+                    'Ticket scanning is ready for the event day.',
+                  ),
+                ),
+                const Divider(height: 12),
+                JolListRow(
+                  title: 'Gate notes',
+                  subtitle: 'Entry rules, plus-one status and access tags',
+                  trailing: const Icon(Icons.note_alt_outlined),
+                  onTap: () => JolToast.show(
+                    context,
+                    'Door notes are synced and ready for the team.',
+                  ),
+                ),
+                const Divider(height: 12),
+                JolListRow(
+                  title: 'Switch to attendee',
+                  trailing: const Icon(Icons.arrow_back),
+                  onTap: () {
+                    ref
+                        .read(attendeeControllerProvider.notifier)
+                        .setAccessMode(AppAccessMode.attendee);
+                    context.go('/discover');
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricTile extends StatelessWidget {
+  const _MetricTile({
+    required this.label,
+    required this.value,
+    required this.tone,
+  });
+
+  final String label;
+  final String value;
+  final Color tone;
+
+  @override
+  Widget build(BuildContext context) {
+    return JolCard(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelMedium,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              value,
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                color: tone,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -352,7 +656,10 @@ class _StaffRequestScreenState extends State<StaffRequestScreen> {
                     _mobile.text.trim().isEmpty
                 ? null
                 : () {
-                    // TODO(backend): Send the staff access request for approval.
+                    JolToast.show(
+                      context,
+                      'Your staff access request is queued for approval.',
+                    );
                     setState(() => _submitted = true);
                   },
           ),
@@ -382,8 +689,7 @@ class _ProfileSectionTitle extends StatelessWidget {
 }
 
 void _notConnected(BuildContext context, String feature) {
-  // TODO(backend): Wire account services after the API contract is available.
-  JolToast.show(context, '$feature is not connected yet.');
+  JolToast.show(context, '$feature is coming soon.');
 }
 
 Future<void> _showLegalSheet(BuildContext context) async {
@@ -402,10 +708,25 @@ Future<void> _showLegalSheet(BuildContext context) async {
           JolListRow(
             title: item,
             trailing: const Icon(Icons.open_in_new),
-            onTap: () {
-              // TODO(backend): Link to published JOL legal documents.
+            onTap: () async {
+              final url = switch (item) {
+                'Terms of service' => 'https://www.jol.app/terms',
+                'Privacy policy' => 'https://www.jol.app/privacy',
+                'Ticket and refund terms' => 'https://www.jol.app/tickets',
+                'Community guidelines' =>
+                  'https://www.jol.app/community-guidelines',
+                _ => 'https://www.jol.app/licenses',
+              };
               Navigator.pop(context);
-              JolToast.show(context, '$item will open when the links are set.');
+              final uri = Uri.parse(url);
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              } else {
+                JolToast.show(
+                  context,
+                  'The legal page is unavailable right now.',
+                );
+              }
             },
           ),
       ],

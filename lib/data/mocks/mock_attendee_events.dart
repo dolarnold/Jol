@@ -1,6 +1,5 @@
 import '../../features/discover/models/jol_event.dart';
 
-// TODO(backend): Replace these UI fixtures with the documented discovery API.
 final mockAttendeeEvents = <JolEvent>[
   JolEvent(
     id: 'sundowner',

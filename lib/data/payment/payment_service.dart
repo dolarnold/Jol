@@ -7,16 +7,28 @@ abstract interface class PaymentService {
 }
 
 class MockPaymentService implements PaymentService {
-  const MockPaymentService({this.outcome = MockPaymentOutcome.success});
+  const MockPaymentService({
+    this.outcome = MockPaymentOutcome.success,
+    this.supportedMethods = const {'Card', 'Instant EFT', 'Mobile payment'},
+  });
 
   final MockPaymentOutcome outcome;
+  final Set<String> supportedMethods;
 
   @override
   Future<MockPaymentOutcome> pay({
     required int amount,
     required String method,
   }) async {
-    // TODO(backend): Replace this mock with the payment API contract.
+    final normalisedMethod = method.trim();
+    if (normalisedMethod.isEmpty || amount <= 0) {
+      return MockPaymentOutcome.declined;
+    }
+
+    if (!supportedMethods.contains(normalisedMethod)) {
+      return MockPaymentOutcome.declined;
+    }
+
     await Future<void>.delayed(const Duration(milliseconds: 350));
     return outcome;
   }

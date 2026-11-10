@@ -39,15 +39,13 @@ GoRouter _createRouter() {
       ),
       GoRoute(
         path: '/category/:category',
-        builder: (context, state) => CategoryScreen(
-          category: state.pathParameters['category']!,
-        ),
+        builder: (context, state) =>
+            CategoryScreen(category: state.pathParameters['category']!),
       ),
       GoRoute(
         path: '/event/:eventId',
-        builder: (context, state) => EventScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            EventScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/invite',
@@ -55,39 +53,33 @@ GoRouter _createRouter() {
       ),
       GoRoute(
         path: '/tickets/choose/:eventId',
-        builder: (context, state) => TicketSelectionScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            TicketSelectionScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/checkout/:eventId',
-        builder: (context, state) => CheckoutScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            CheckoutScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/payment-result/:eventId',
-        builder: (context, state) => PaymentResultScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            PaymentResultScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/ticket/:eventId',
-        builder: (context, state) => TicketQrScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            TicketQrScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/fund/:eventId',
-        builder: (context, state) => FundScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            FundScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/share/:eventId',
-        builder: (context, state) => ShareEventScreen(
-          eventId: state.pathParameters['eventId']!,
-        ),
+        builder: (context, state) =>
+            ShareEventScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/student-verify',
@@ -96,6 +88,10 @@ GoRouter _createRouter() {
       GoRoute(
         path: '/staff-request',
         builder: (context, state) => const StaffRequestScreen(),
+      ),
+      GoRoute(
+        path: '/staff',
+        builder: (context, state) => const StaffDashboardScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) => Scaffold(
@@ -132,10 +128,7 @@ GoRouter _createRouter() {
             routes: [
               GoRoute(
                 path: '/host',
-                builder: (context, state) => const TabPlaceholderScreen(
-                  title: 'hosting',
-                  subtitle: 'Your events, all in one place.',
-                ),
+                builder: (context, state) => const HostDashboardScreen(),
               ),
             ],
           ),
