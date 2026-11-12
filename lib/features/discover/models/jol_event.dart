@@ -59,6 +59,7 @@ class JolEvent {
     this.fundRaised = 0,
     this.fundGoal = 0,
     this.fundContributors = 0,
+    this.isApiBacked = false,
   });
 
   final String id;
@@ -94,6 +95,93 @@ class JolEvent {
   final int fundRaised;
   final int fundGoal;
   final int fundContributors;
+  final bool isApiBacked;
+
+  factory JolEvent.fromApi(Map<String, dynamic> json) {
+    final startTime = DateTime.parse(json['start_time'] as String).toLocal();
+    final rawEndTime = json['end_time'];
+    final endTime = rawEndTime is String
+        ? DateTime.parse(rawEndTime).toLocal()
+        : startTime.add(const Duration(hours: 2));
+    final category = (json['category'] as String? ?? 'general').toLowerCase();
+    final isPrivate = json['is_private'] == true;
+    final address = json['address'] as String?;
+    final rawTiers = json['ticket_tiers'];
+    final tiers = rawTiers is List
+        ? rawTiers
+              .map((item) {
+                if (item is! Map) {
+                  throw const FormatException(
+                    'Invalid ticket tier in event data.',
+                  );
+                }
+                final tier = Map<String, dynamic>.from(item);
+                final remaining = tier['remaining'] as int?;
+                return JolTicketTier(
+                  id: tier['id'].toString(),
+                  name: tier['name'] as String? ?? 'Ticket',
+                  price: _apiPrice(tier['price']),
+                  description: tier['description'] as String? ?? '',
+                  remaining: remaining,
+                  isSoldOut: remaining == 0,
+                );
+              })
+              .toList(growable: false)
+        : const <JolTicketTier>[];
+    final hostData = json['host'];
+    final host = hostData is Map
+        ? Map<String, dynamic>.from(hostData)['name'] as String? ?? 'JOL host'
+        : 'JOL host';
+    final contributionData = json['contribution_pot'];
+    final contribution = contributionData is Map
+        ? Map<String, dynamic>.from(contributionData)
+        : null;
+    final colors = _posterColors(category);
+    final venue = isPrivate
+        ? (json['location_name'] as String? ?? 'Private event')
+        : (json['location_name'] as String? ?? address ?? 'Location TBA');
+    final area = isPrivate
+        ? 'Cape Town'
+        : address?.split(',').last.trim().isNotEmpty == true
+        ? address!.split(',').last.trim()
+        : 'Cape Town';
+
+    return JolEvent(
+      id: json['id'].toString(),
+      title: json['title'] as String? ?? 'Untitled event',
+      category: category,
+      date: startTime,
+      startTime: _formatTime(startTime),
+      endTime: _formatTime(endTime),
+      venue: venue,
+      area: area,
+      host: host,
+      hostInitials: _initials(host),
+      attending: 0,
+      description: json['description'] as String? ?? '',
+      entryRules: '',
+      posterStyle:
+          JolPosterStyle.values[category.codeUnits.fold<int>(
+                0,
+                (value, unit) => value + unit,
+              ) %
+              JolPosterStyle.values.length],
+      posterPrimary: colors.$1,
+      posterSecondary: colors.$2,
+      isPaid: tiers.isNotEmpty,
+      fromPrice: tiers.isEmpty
+          ? 0
+          : tiers.map((tier) => tier.price).reduce((a, b) => a < b ? a : b),
+      isPrivate: isPrivate,
+      isSoldOut: tiers.isNotEmpty && tiers.every((tier) => tier.isSoldOut),
+      isVerifiedHost: false,
+      tiers: tiers,
+      fundTitle: contribution?['title'] as String?,
+      fundRaised: _apiPrice(contribution?['current_amount']),
+      fundGoal: _apiPrice(contribution?['target_amount']),
+      isApiBacked: true,
+    );
+  }
 
   String get address =>
       isPrivate ? '$area, Cape Town' : '$venue, $area, Cape Town';
@@ -103,6 +191,37 @@ class JolEvent {
     if (!isPaid) return 'Free';
     return 'From ${formatZar(fromPrice)}';
   }
+}
+
+int _apiPrice(Object? value) {
+  if (value is num) return value.round();
+  return 0;
+}
+
+String _formatTime(DateTime value) =>
+    '${value.hour.toString().padLeft(2, '0')}:'
+    '${value.minute.toString().padLeft(2, '0')}';
+
+String _initials(String value) {
+  final parts = value
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty);
+  return parts.take(2).map((part) => part[0].toUpperCase()).join();
+}
+
+(int, int) _posterColors(String category) {
+  const palettes = [
+    (0xFFE8792E, 0xFF4A0E1C),
+    (0xFFC69A62, 0xFF16223F),
+    (0xFF7C5CE0, 0xFF7E9786),
+    (0xFFE9B872, 0xFF6E4366),
+    (0xFF55A899, 0xFF183D46),
+  ];
+  final index =
+      category.codeUnits.fold<int>(0, (value, unit) => value + unit) %
+      palettes.length;
+  return palettes[index];
 }
 
 String formatZar(int amount) {

@@ -1,20 +1,65 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:jol/app.dart';
+import 'package:jol/data/api/api_client.dart';
+import 'package:jol/data/auth/auth_repository.dart';
+import 'package:jol/data/mocks/mock_attendee_events.dart';
+import 'package:jol/features/discover/data/event_repository.dart';
+
+Widget _testApp() {
+  return ProviderScope(
+    overrides: [
+      authRepositoryProvider.overrideWithValue(_TestAuthRepository()),
+      attendeeEventsProvider.overrideWith((ref) async => mockAttendeeEvents),
+    ],
+    child: const JolApp(),
+  );
+}
 
 Future<void> _launchToWelcome(WidgetTester tester) async {
-  await tester.pumpWidget(const ProviderScope(child: JolApp()));
+  await tester.pumpWidget(_testApp());
   await tester.pump(const Duration(milliseconds: 1500));
   await tester.pumpAndSettle();
+}
+
+class _MemoryTokenStore implements TokenStore {
+  String? token;
+
+  @override
+  Future<void> clear() async => token = null;
+
+  @override
+  Future<String?> read() async => token;
+
+  @override
+  Future<void> write(String value) async => token = value;
+}
+
+class _TestAuthRepository extends AuthRepository {
+  _TestAuthRepository() : super(Dio(), _MemoryTokenStore());
+
+  @override
+  Future<void> registerAttendee({
+    required String name,
+    required String email,
+    required String phone,
+    required String password,
+  }) async {}
+
+  @override
+  Future<void> login({required String login, required String password}) async {
+    throw const ApiException('Invalid credentials.');
+  }
 }
 
 void main() {
   testWidgets('splash leads to welcome with a working theme switch', (
     tester,
   ) async {
-    await tester.pumpWidget(const ProviderScope(child: JolApp()));
+    await tester.pumpWidget(_testApp());
 
     expect(find.text('J O L'), findsOneWidget);
     expect(
@@ -41,11 +86,11 @@ void main() {
       Theme.of(tester.element(find.text('Let’s get you in'))).brightness,
       Brightness.light,
     );
-    expect(find.text('Student email'), findsOneWidget);
-    expect(find.text('Send code & continue'), findsOneWidget);
+    expect(find.text('Password'), findsOneWidget);
+    expect(find.text('Create account'), findsOneWidget);
   });
 
-  testWidgets('sign-up validates fields without pretending to send a code', (
+  testWidgets('sign-up validates fields and submits an account', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(412, 915);
@@ -60,13 +105,6 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('signup-continue')));
     await tester.pumpAndSettle();
     expect(find.text('Enter your full name.'), findsOneWidget);
-    expect(
-      find.text(
-        "That isn't a student email. Use your university "
-        'address ending in .ac.za, like name@myuct.ac.za.',
-      ),
-      findsOneWidget,
-    );
 
     await tester.enterText(
       find.byKey(const ValueKey('signup-name')),
@@ -80,50 +118,39 @@ void main() {
       find.byKey(const ValueKey('signup-email')),
       'lesego@example.com',
     );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('signup-password')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.enterText(
-      find.byKey(const ValueKey('student-email')),
-      'lesego@college.co.za',
+      find.byKey(const ValueKey('signup-password')),
+      'password123',
     );
     await tester.tap(find.byKey(const ValueKey('signup-continue')));
     await tester.pumpAndSettle();
-    expect(
-      find.text(
-        "That isn't a student email. Use your university "
-        'address ending in .ac.za, like name@myuct.ac.za.',
-      ),
-      findsOneWidget,
-    );
-
-    await tester.enterText(
-      find.byKey(const ValueKey('student-email')),
-      'lesego@myuct.ac.za',
-    );
-    await tester.tap(find.byKey(const ValueKey('signup-continue')));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Sign-up isn’t connected yet, so no code was sent.'),
-      findsOneWidget,
-    );
+    expect(find.text('discover more'), findsOneWidget);
   });
 
-  testWidgets('login and guest browsing lead to the tab shell', (tester) async {
+  testWidgets('login errors are shown and guests can browse the tab shell', (
+    tester,
+  ) async {
     await _launchToWelcome(tester);
     await tester.tap(find.text('I already have an account'));
     await tester.pumpAndSettle();
     expect(find.text('good to see you again'), findsOneWidget);
 
     await tester.enterText(
-      find.byKey(const ValueKey('mobile-number')),
+      find.byKey(const ValueKey('login-identifier')),
       '825550147',
     );
-    await tester.tap(find.text('Continue'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Sign-in isn’t connected yet, so no code was sent.'),
-      findsOneWidget,
+    await tester.enterText(
+      find.byKey(const ValueKey('login-password')),
+      'password123',
     );
-    await tester.pump(const Duration(seconds: 3));
+    await tester.tap(find.text('Log in').last);
     await tester.pumpAndSettle();
+    expect(find.text('Invalid credentials.'), findsOneWidget);
 
     await tester.pageBack();
     await tester.pumpAndSettle();

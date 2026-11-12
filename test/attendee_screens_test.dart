@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jol/data/mocks/mock_attendee_events.dart';
 import 'package:jol/features/attendee/state/attendee_controller.dart';
+import 'package:jol/features/discover/data/event_repository.dart';
 import 'package:jol/features/discover/models/jol_event.dart';
 import 'package:jol/features/discover/screens/attendee_discovery_screens.dart';
 import 'package:jol/features/discover/widgets/jol_poster.dart';
@@ -18,6 +20,11 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [
+          attendeeEventsProvider.overrideWith(
+            (ref) async => mockAttendeeEvents,
+          ),
+        ],
         child: MaterialApp(
           theme: JolTheme.dark,
           home: Scaffold(body: DiscoverScreen()),
@@ -48,6 +55,11 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [
+          attendeeEventsProvider.overrideWith(
+            (ref) async => mockAttendeeEvents,
+          ),
+        ],
         child: MaterialApp(
           theme: JolTheme.dark,
           home: Scaffold(body: SearchScreen()),
@@ -74,6 +86,12 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        overrides: [
+          attendeeEventProvider('thandi').overrideWith(
+            (ref) async =>
+                mockAttendeeEvents.firstWhere((event) => event.id == 'thandi'),
+          ),
+        ],
         child: MaterialApp(
           theme: JolTheme.dark,
           home: Scaffold(body: EventScreen(eventId: 'thandi')),
