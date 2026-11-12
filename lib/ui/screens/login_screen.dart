@@ -1,33 +1,67 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../data/api/api_client.dart';
+import '../../data/auth/auth_repository.dart';
 import '../theme/jol_theme.dart';
 import '../widgets/jol_button.dart';
-import '../widgets/jol_phone_field.dart';
 import '../widgets/jol_theme_button.dart';
-import '../widgets/jol_toast.dart';
 
-class LoginScreen extends StatefulWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _phoneController = TextEditingController();
+  final _loginController = TextEditingController();
+  final _passwordController = TextEditingController();
+  var _isSubmitting = false;
+  String? _errorMessage;
 
   @override
   void dispose() {
-    _phoneController.dispose();
+    _loginController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
-  void _continue() {
+  Future<void> _continue() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    JolToast.show(context, 'Sign-in isn’t connected yet, so no code was sent.');
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await ref
+          .read(authRepositoryProvider)
+          .login(
+            login: _normalizeLogin(_loginController.text),
+            password: _passwordController.text,
+          );
+      if (!mounted) return;
+      context.go('/discover');
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _errorMessage = error.message);
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  String _normalizeLogin(String input) {
+    final value = input.trim();
+    if (value.contains('@')) return value;
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 9) return '+27$digits';
+    if (digits.length == 10 && digits.startsWith('0')) {
+      return '+27${digits.substring(1)}';
+    }
+    return value;
   }
 
   @override
@@ -58,16 +92,46 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Enter your mobile number and we’ll text a code to '
-                        'confirm it’s you.',
+                        'Log in with the email address or mobile number on '
+                        'your JOL account.',
                         style: Theme.of(context).textTheme.bodyLarge
                             ?.copyWith(color: tokens.muted),
                       ),
                       const SizedBox(height: 32),
-                      JolPhoneField(
-                        controller: _phoneController,
-                        validator: _validatePhone,
+                      TextFormField(
+                        key: const ValueKey('login-identifier'),
+                        controller: _loginController,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        validator: (value) => (value ?? '').trim().isEmpty
+                            ? 'Enter your email or mobile number.'
+                            : null,
+                        decoration: const InputDecoration(
+                          labelText: 'Email or mobile number',
+                        ),
                       ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        key: const ValueKey('login-password'),
+                        controller: _passwordController,
+                        obscureText: true,
+                        textInputAction: TextInputAction.done,
+                        validator: (value) => (value ?? '').isEmpty
+                            ? 'Enter your password.'
+                            : null,
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
+                        ),
+                      ),
+                      if (_errorMessage != null) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          _errorMessage!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -75,9 +139,9 @@ class _LoginScreenState extends State<LoginScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
                 child: JolButton(
-                  label: 'Continue',
+                  label: _isSubmitting ? 'Signing in…' : 'Log in',
                   expanded: true,
-                  onPressed: _continue,
+                  onPressed: _isSubmitting ? null : _continue,
                 ),
               ),
             ],
@@ -85,13 +149,6 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
-  }
-
-  String? _validatePhone(String? value) {
-    if ((value ?? '').trim().length != 9) {
-      return 'Enter the 9 digits after +27.';
-    }
-    return null;
   }
 }
 
