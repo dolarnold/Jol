@@ -61,11 +61,9 @@ void main() {
   ) async {
     await tester.pumpWidget(_testApp());
 
-    expect(find.text('J O L'), findsOneWidget);
-    expect(
-      Theme.of(tester.element(find.text('J O L'))).brightness,
-      Brightness.dark,
-    );
+    final splashImage = find.byKey(const ValueKey('startup-splash-image'));
+    expect(splashImage, findsOneWidget);
+    expect(Theme.of(tester.element(splashImage)).brightness, Brightness.dark);
 
     await tester.pump(const Duration(milliseconds: 1500));
     await tester.pumpAndSettle();

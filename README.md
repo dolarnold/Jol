@@ -17,6 +17,11 @@ The attendee sign-up and login screens call the Laravel API. The app loads
 public events and event details from the same API. Secure bearer tokens are
 stored using the platform's secure storage.
 
+Attendee sign-up sends the name, email, South African mobile number, and
+password to `/api/v1/auth/register-attendee`. The Laravel API saves those
+fields to its `users` table and returns a bearer token; the password is stored
+as a hash.
+
 The default API URL targets Laravel's local development server. From the
 Laravel project, start the API so an Android emulator can reach it:
 

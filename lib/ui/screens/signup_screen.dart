@@ -55,7 +55,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
       if (!mounted) return;
       JolToast.show(
         context,
-        'Account created. Check your email to verify your address.',
+        'Account created. You’re signed in.',
       );
       context.go('/discover');
     } on ApiException catch (error) {
