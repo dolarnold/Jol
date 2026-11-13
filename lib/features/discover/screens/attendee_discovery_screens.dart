@@ -12,6 +12,7 @@ import '../../../ui/widgets/jol_segmented.dart';
 import '../../../ui/widgets/jol_sheet.dart';
 import '../../../ui/widgets/jol_toast.dart';
 import '../../attendee/state/attendee_controller.dart';
+import '../data/event_repository.dart';
 import '../models/jol_event.dart';
 import '../widgets/attendee_components.dart';
 import '../widgets/jol_poster.dart';
@@ -114,8 +115,10 @@ class DiscoverScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(attendeeControllerProvider);
     final controller = ref.read(attendeeControllerProvider.notifier);
+    final eventsResult = ref.watch(attendeeEventsProvider);
     final tokens = JolTokens.of(context);
-    final events = _filteredEvents(state);
+    final allEvents = eventsResult.asData?.value ?? const <JolEvent>[];
+    final events = _filteredEvents(state, allEvents);
 
     return SafeArea(
       child: CustomScrollView(
@@ -188,6 +191,7 @@ class DiscoverScreen extends ConsumerWidget {
             child: _DateStrip(
               today: _referenceToday,
               selectedDate: state.selectedDate,
+              events: allEvents,
               onSelect: controller.setDate,
             ),
           ),
@@ -247,7 +251,38 @@ class DiscoverScreen extends ConsumerWidget {
               ),
             ),
           ),
-          if (events.isEmpty)
+          if (eventsResult.isLoading && eventsResult.asData == null)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            )
+          else if (eventsResult.hasError)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: JolCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Live events could not be loaded.'),
+                      const SizedBox(height: 8),
+                      Text(
+                        eventsResult.error.toString(),
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: tokens.muted),
+                      ),
+                      TextButton(
+                        onPressed: () => ref.invalidate(attendeeEventsProvider),
+                        child: const Text('Try again'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else if (events.isEmpty)
             SliverFillRemaining(
               hasScrollBody: false,
               child: AttendeeEmptyState(
@@ -298,8 +333,11 @@ class DiscoverScreen extends ConsumerWidget {
     );
   }
 
-  List<JolEvent> _filteredEvents(AttendeeState state) {
-    return mockAttendeeEvents.where((event) {
+  List<JolEvent> _filteredEvents(
+    AttendeeState state,
+    List<JolEvent> allEvents,
+  ) {
+    return allEvents.where((event) {
       if (state.selectedDate != null &&
           !_sameDay(event.date, state.selectedDate!)) {
         return false;
@@ -317,11 +355,13 @@ class _DateStrip extends StatelessWidget {
   const _DateStrip({
     required this.today,
     required this.selectedDate,
+    required this.events,
     required this.onSelect,
   });
 
   final DateTime today;
   final DateTime? selectedDate;
+  final List<JolEvent> events;
   final ValueChanged<DateTime?> onSelect;
 
   @override
@@ -350,9 +390,7 @@ class _DateStrip extends StatelessWidget {
               label: _weekday(date),
               subLabel: '${date.day}',
               selected: selectedDate != null && _sameDay(selectedDate!, date),
-              hasEvents: mockAttendeeEvents.any(
-                (event) => _sameDay(event.date, date),
-              ),
+              hasEvents: events.any((event) => _sameDay(event.date, date)),
               onTap: () => onSelect(date),
             ),
         ],
@@ -418,7 +456,8 @@ class CategoryScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(attendeeControllerProvider);
-    final events = mockAttendeeEvents
+    final eventsResult = ref.watch(attendeeEventsProvider);
+    final events = (eventsResult.asData?.value ?? const <JolEvent>[])
         .where(
           (event) =>
               event.category == category &&
@@ -468,7 +507,34 @@ class CategoryScreen extends ConsumerWidget {
               child: AttendeeSectionTitle('$category in Cape Town'),
             ),
           ),
-          if (events.isEmpty)
+          if (eventsResult.isLoading && eventsResult.asData == null)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            )
+          else if (eventsResult.hasError)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: JolCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Live events could not be loaded.'),
+                      const SizedBox(height: 8),
+                      Text(eventsResult.error.toString()),
+                      TextButton(
+                        onPressed: () => ref.invalidate(attendeeEventsProvider),
+                        child: const Text('Try again'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else if (events.isEmpty)
             const SliverFillRemaining(
               hasScrollBody: false,
               child: AttendeeEmptyState(
@@ -502,15 +568,17 @@ class SearchScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(attendeeControllerProvider);
     final controller = ref.read(attendeeControllerProvider.notifier);
+    final eventsResult = ref.watch(attendeeEventsProvider);
     final tokens = JolTokens.of(context);
     final query = state.searchQuery.trim().toLowerCase();
-    final matchingEvents = mockAttendeeEvents.where((event) {
+    final allEvents = eventsResult.asData?.value ?? const <JolEvent>[];
+    final matchingEvents = allEvents.where((event) {
       return query.isEmpty ||
           '${event.title} ${event.area} ${event.category} ${event.host}'
               .toLowerCase()
               .contains(query);
     }).toList();
-    final hosts = mockAttendeeEvents
+    final hosts = allEvents
         .map((event) => event.host)
         .toSet()
         .where((host) => query.isEmpty || host.toLowerCase().contains(query))
@@ -559,6 +627,19 @@ class SearchScreen extends ConsumerWidget {
                 }),
           ),
           const SizedBox(height: 18),
+          if (eventsResult.isLoading && eventsResult.asData == null)
+            const Center(child: CircularProgressIndicator())
+          else if (eventsResult.hasError)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Live events could not be loaded: ${eventsResult.error}'),
+                TextButton(
+                  onPressed: () => ref.invalidate(attendeeEventsProvider),
+                  child: const Text('Try again'),
+                ),
+              ],
+            ),
           if (state.searchTab == AttendeeSearchTab.all ||
               state.searchTab == AttendeeSearchTab.events) ...[
             AttendeeSectionTitle('events'),
@@ -582,7 +663,7 @@ class SearchScreen extends ConsumerWidget {
                   child: JolListRow(
                     title: host,
                     subtitle:
-                        mockAttendeeEvents.any(
+                        allEvents.any(
                           (event) => event.host == host && event.isVerifiedHost,
                         )
                         ? 'Verified organiser'
@@ -649,7 +730,20 @@ class EventScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final event = findAttendeeEvent(eventId);
+    final eventResult = ref.watch(attendeeEventProvider(eventId));
+    if (eventResult.isLoading && eventResult.asData == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (eventResult.hasError && eventResult.asData == null) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: AttendeeEmptyState(
+          title: 'Event could not be loaded',
+          message: eventResult.error.toString(),
+        ),
+      );
+    }
+    final event = eventResult.asData?.value;
     if (event == null) {
       return Scaffold(
         appBar: AppBar(),
@@ -901,7 +995,9 @@ class EventScreen extends ConsumerWidget {
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
         child: JolButton(
-          label: event.isSoldOut
+          label: event.isApiBacked
+              ? 'Bookings coming soon'
+              : event.isSoldOut
               ? 'Sold out · Notify me'
               : event.isPaid
               ? 'Get tickets · from ${formatZar(event.fromPrice)}'
@@ -912,7 +1008,9 @@ class EventScreen extends ConsumerWidget {
           variant: event.isPaid
               ? JolButtonVariant.purchase
               : JolButtonVariant.primary,
-          onPressed: event.isSoldOut
+          onPressed: event.isApiBacked
+              ? null
+              : event.isSoldOut
               ? () => JolToast.show(
                   context,
                   'We’ll notify you when tickets open.',
@@ -992,21 +1090,7 @@ class _InviteCodeScreenState extends State<InviteCodeScreen> {
                   JolToast.show(context, 'Enter an invite code to continue.');
                   return;
                 }
-
-                final event = mockAttendeeEvents.firstWhere(
-                  (item) => item.isPrivate,
-                  orElse: () => mockAttendeeEvents.first,
-                );
-
-                final matchesHostCode =
-                    code.toUpperCase().startsWith('JOL') ||
-                    code.toUpperCase().contains('PRIVATE');
-                if (!matchesHostCode) {
-                  JolToast.show(context, 'That invite code is not active yet.');
-                  return;
-                }
-
-                context.go('/event/${event.id}');
+                context.go('/event/${Uri.encodeComponent(code)}');
               },
             ),
           ],

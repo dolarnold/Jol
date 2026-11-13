@@ -1,42 +1,68 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../features/auth/student_email_validator.dart';
+import '../../data/api/api_client.dart';
+import '../../data/auth/auth_repository.dart';
 import '../theme/jol_theme.dart';
 import '../widgets/jol_button.dart';
 import '../widgets/jol_phone_field.dart';
 import '../widgets/jol_theme_button.dart';
 import '../widgets/jol_toast.dart';
-import '../widgets/jol_toggle.dart';
 
-class SignUpScreen extends StatefulWidget {
+class SignUpScreen extends ConsumerStatefulWidget {
   const SignUpScreen({super.key});
 
   @override
-  State<SignUpScreen> createState() => _SignUpScreenState();
+  ConsumerState<SignUpScreen> createState() => _SignUpScreenState();
 }
 
-class _SignUpScreenState extends State<SignUpScreen> {
+class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
-  final _studentEmailController = TextEditingController();
-  bool _isStudent = true;
+  final _passwordController = TextEditingController();
+  var _isSubmitting = false;
+  String? _errorMessage;
 
   @override
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
-    _studentEmailController.dispose();
+    _passwordController.dispose();
     super.dispose();
   }
 
-  void _continue() {
+  Future<void> _continue() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    JolToast.show(context, 'Sign-up isn’t connected yet, so no code was sent.');
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+
+    try {
+      await ref
+          .read(authRepositoryProvider)
+          .registerAttendee(
+            name: _nameController.text.trim(),
+            email: _emailController.text.trim(),
+            phone: '+27${_phoneController.text.trim()}',
+            password: _passwordController.text,
+          );
+      if (!mounted) return;
+      JolToast.show(
+        context,
+        'Account created. You’re signed in.',
+      );
+      context.go('/discover');
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _errorMessage = error.message);
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
   }
 
   @override
@@ -67,8 +93,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Takes under a minute. We’ll text a code to confirm '
-                        'your number.',
+                        'Create your JOL account with your email and mobile '
+                        'number.',
                         style: Theme.of(context).textTheme.bodyMedium
                             ?.copyWith(color: tokens.muted, fontSize: 15),
                       ),
@@ -98,7 +124,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       const SizedBox(height: 16),
                       _LabeledField(
                         label: 'Email',
-                        helper: '(for receipts)',
                         child: TextFormField(
                           key: const ValueKey('signup-email'),
                           controller: _emailController,
@@ -111,19 +136,44 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      _StudentCard(
-                        isStudent: _isStudent,
-                        emailController: _studentEmailController,
-                        onChanged: (value) {
-                          setState(() => _isStudent = value);
-                        },
+                      _LabeledField(
+                        label: 'Password',
+                        child: TextFormField(
+                          key: const ValueKey('signup-password'),
+                          controller: _passwordController,
+                          obscureText: true,
+                          textInputAction: TextInputAction.done,
+                          validator: (value) => (value ?? '').length < 8
+                              ? 'Use at least 8 characters.'
+                              : null,
+                          decoration: const InputDecoration(
+                            hintText: 'At least 8 characters',
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 12),
+                      Text(
+                        'Student verification is not connected to the API yet.',
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: tokens.muted),
+                      ),
+                      if (_errorMessage != null) ...[
+                        const SizedBox(height: 16),
+                        Text(
+                          _errorMessage!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
               ),
-              _SignUpFooter(onContinue: _continue),
+              _SignUpFooter(
+                isSubmitting: _isSubmitting,
+                onContinue: _isSubmitting ? null : _continue,
+              ),
             ],
           ),
         ),
@@ -167,10 +217,9 @@ class _SignUpHeader extends StatelessWidget {
 }
 
 class _LabeledField extends StatelessWidget {
-  const _LabeledField({required this.label, required this.child, this.helper});
+  const _LabeledField({required this.label, required this.child});
 
   final String label;
-  final String? helper;
   final Widget child;
 
   @override
@@ -178,20 +227,7 @@ class _LabeledField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        RichText(
-          text: TextSpan(
-            text: label,
-            style: Theme.of(context).textTheme.labelLarge,
-            children: [
-              if (helper != null)
-                TextSpan(
-                  text: ' $helper',
-                  style: Theme.of(context).textTheme.bodyMedium
-                      ?.copyWith(color: JolTokens.of(context).muted),
-                ),
-            ],
-          ),
-        ),
+        Text(label, style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 8),
         child,
       ],
@@ -199,72 +235,11 @@ class _LabeledField extends StatelessWidget {
   }
 }
 
-class _StudentCard extends StatelessWidget {
-  const _StudentCard({
-    required this.isStudent,
-    required this.emailController,
-    required this.onChanged,
-  });
-
-  final bool isStudent;
-  final TextEditingController emailController;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = JolTokens.of(context);
-
-    return Container(
-      decoration: BoxDecoration(
-        color: tokens.surface,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          JolToggle(
-            label: 'I’m a student',
-            subtitle: 'Unlock student prices where events offer them.',
-            value: isStudent,
-            onChanged: onChanged,
-          ),
-          if (isStudent) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Student email',
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              key: const ValueKey('student-email'),
-              controller: emailController,
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.done,
-              validator: (value) => isValidStudentEmail(value ?? '')
-                  ? null
-                  : "That isn't a student email. Use your university "
-                        'address ending in .ac.za, like name@myuct.ac.za.',
-              decoration: const InputDecoration(hintText: 'you@myuct.ac.za'),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Use the email your university gave you (ending in .ac.za). '
-              'We’ll send a code there to verify you.',
-              style: Theme.of(context).textTheme.bodyMedium
-                  ?.copyWith(color: tokens.muted),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 class _SignUpFooter extends StatelessWidget {
-  const _SignUpFooter({required this.onContinue});
+  const _SignUpFooter({required this.isSubmitting, required this.onContinue});
 
-  final VoidCallback onContinue;
+  final bool isSubmitting;
+  final VoidCallback? onContinue;
 
   @override
   Widget build(BuildContext context) {
@@ -290,7 +265,7 @@ class _SignUpFooter extends StatelessWidget {
           const SizedBox(height: 8),
           JolButton(
             key: const ValueKey('signup-continue'),
-            label: 'Send code & continue',
+            label: isSubmitting ? 'Creating account…' : 'Create account',
             expanded: true,
             onPressed: onContinue,
           ),
