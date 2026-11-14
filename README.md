@@ -1,6 +1,42 @@
 # JOL
 
-A Flutter app for discovering and hosting events in Cape Town.
+A Flutter app (Android and iOS) for discovering, booking and hosting events in
+Cape Town. It talks to the JOL Laravel backend (`Jol_backend`) through its
+`/api/v1` API and never connects to the database directly.
+
+## Features
+
+- **Getting started:** splash, welcome, sign-up and login. You can also choose
+  **Look around first** to browse the five-tab shell without an account.
+- **Discover:**
+  - Browse the public event feed and the Top List.
+  - Use **Near me**, or browse events on a map.
+  - Open private events by invite code.
+- **Event page:**
+  - A poster, plus a map with directions. Private locations stay hidden until
+    you're booked.
+  - Ticket types, the contribution fund, 18+ and plus-one details.
+  - Contact the organiser, report the event, or request to promote it.
+- **Booking:** RSVPs (with limit and cutoff), ticket checkout, My Tickets with
+  QR codes, and ticket transfer.
+- **Hosting (casual hosts):**
+  - Create, edit, preview and save events as drafts.
+  - Add a cover image and pick a location on Google Maps.
+  - Add multiple ticket types, a contribution fund, a poster style and RSVP
+    rules.
+  - Scan tickets at the door, see the guest list and handle staff requests.
+- **Inbox:** notifications, push notifications, support messages and account
+  warnings.
+- **Theme:** dark and light mode.
+
+Casual hosts are capped at R250 per ticket, 400 people and R20,000 per event.
+Commercial hosts manage their events on the website instead.
+
+## Tech stack
+
+Flutter (Dart 3.13+), Riverpod 3, go_router, Dio, flutter_secure_storage (for
+the bearer token), google_maps_flutter, geolocator, image_picker,
+firebase_messaging, qr_flutter and share_plus.
 
 ## Run locally
 
@@ -9,70 +45,79 @@ flutter pub get
 flutter run
 ```
 
-The app opens with the JOL splash screen, followed by welcome, sign-up, and
-login. Choose **Look around first** to enter the five-tab shell without signing
-in. The theme button switches between dark and light mode.
+The API URL defaults to Laravel's local development server:
 
-The attendee sign-up and login screens call the Laravel API. The app loads
-public events and event details from the same API. Secure bearer tokens are
-stored using the platform's secure storage.
+- Android emulator: `http://10.0.2.2:8000/api/v1`
+- Desktop: `http://127.0.0.1:8000/api/v1`
 
-Attendee sign-up sends the name, email, South African mobile number, and
-password to `/api/v1/auth/register-attendee`. The Laravel API saves those
-fields to its `users` table and returns a bearer token; the password is stored
-as a hash.
-
-The default API URL targets Laravel's local development server. From the
-Laravel project, start the API so an Android emulator can reach it:
+Start the backend so the emulator can reach it:
 
 ```shell
 php artisan serve --host=0.0.0.0 --port=8000
 ```
 
-For Android emulator or local desktop development, the default URLs are
-`http://10.0.2.2:8000/api/v1` and `http://127.0.0.1:8000/api/v1`
-respectively. For a physical device or deployed server, supply the API URL
-including `/api/v1` at build/run time:
+For a physical device, or to use the live server, pass the API URL (including
+`/api/v1`):
 
 ```shell
-flutter run --dart-define=API_BASE_URL=https://your-api.example.com/api/v1
+flutter run --dart-define=API_BASE_URL=https://jol-backend-production-xgp5ka.laravel.cloud/api/v1
 ```
 
-Live event browsing is connected. RSVP submission and ticket checkout still
-need to be wired to the Laravel API.
+To get demo accounts and events, run
+`php artisan db:seed --class=JolFeaturesSeeder` on the backend. Every demo
+account's password is `password`, for example `thandi@jol.test` (casual host)
+or `kyle@jol.test` (attendee).
 
 ## Google Maps
 
-The location picker, event maps, "Near me" and the Discover map use Google
-Maps. Address search goes through the backend (`/api/v1/maps/*`), so the app
-only needs a Maps SDK key:
+The location picker, event maps, Near me and the Discover map use Google Maps.
+Address search goes through the backend (`/api/v1/maps/*`), so the app only
+needs a Maps SDK key:
 
 - **Android:** add `GOOGLE_MAPS_API_KEY=your-android-key` to
-  `android/local.properties` (not committed).
+  `android/local.properties`. This file isn't committed.
 - **iOS:** copy `ios/Flutter/Maps.xcconfig.example` to
-  `ios/Flutter/Maps.xcconfig` (not committed) and paste your iOS key.
-- **Backend:** set `GOOGLE_MAPS_SERVER_KEY` in the Laravel `.env` (Places API
-  (New) and Geocoding API enabled).
+  `ios/Flutter/Maps.xcconfig` and paste your iOS key. This file isn't
+  committed.
+- **Backend:** in the website's superadmin, open **Integrations & API Keys**
+  and paste the server key. Enable Places API (New) and Geocoding API for that
+  key.
 
-On build servers such as Codemagic, set `GOOGLE_MAPS_API_KEY` as an
-environment variable for Android, and write `ios/Flutter/Maps.xcconfig` in a
-pre-build script for iOS.
+On build servers such as Codemagic (`codemagic.yaml`), set
+`GOOGLE_MAPS_API_KEY` as an environment variable for Android. For iOS, write
+`ios/Flutter/Maps.xcconfig` in a pre-build script.
 
 ## Push notifications (Firebase)
 
 1. `flutter pub add firebase_core firebase_messaging`
-2. `dart pub global activate flutterfire_cli`, then `flutterfire configure` in
-   this folder and pick your Firebase project. It adds `google-services.json`
-   (Android) and `GoogleService-Info.plist` (iOS) and the Gradle setup.
-3. iOS only: in Xcode add the **Push Notifications** capability and
-   **Background Modes → Remote notifications**, and upload an APNs key in
+2. Run `dart pub global activate flutterfire_cli`, then run
+   `flutterfire configure` in this folder and pick your Firebase project. This
+   adds `google-services.json` (Android), `GoogleService-Info.plist` (iOS) and
+   the Gradle setup.
+3. iOS only: in Xcode, add the **Push Notifications** capability and
+   **Background Modes → Remote notifications**. Then upload an APNs key in
    Firebase → Project settings → Cloud Messaging.
 4. In the website's superadmin, open **Integrations & API Keys** and paste the
    Firebase **service account** JSON from the same project.
 
-Without step 2 the app still runs, just without push.
+Without step 2 the app still runs, but without push.
 
-## Tests
+## Project layout
+
+```
+lib/main.dart, lib/app.dart   Entry point, router and theme
+lib/data/                     API client, auth, booking and push repositories
+lib/features/discover/        Feed, event page, event models
+lib/features/booking/         Checkout and tickets
+lib/features/hosting/         Create/edit events, door scanning, guests
+lib/features/maps/            Location picker, event map, Discover map
+lib/features/inbox/           Notifications and support messages
+lib/features/profile/         Profile and settings
+lib/features/attendee/        Attendee state
+lib/ui/                       Shared widgets and theme
+```
+
+## Checks
 
 ```shell
 flutter analyze
