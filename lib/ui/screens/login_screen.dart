@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../data/api/api_client.dart';
 import '../../data/auth/auth_repository.dart';
+import '../../data/auth/profile_repository.dart';
 import '../theme/jol_theme.dart';
 import '../widgets/jol_button.dart';
 import '../widgets/jol_theme_button.dart';
@@ -45,6 +46,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             password: _passwordController.text,
           );
       if (!mounted) return;
+      ref.invalidate(currentUserProvider);
       context.go('/discover');
     } on ApiException catch (error) {
       if (mounted) setState(() => _errorMessage = error.message);

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../data/api/api_client.dart';
 import '../../data/auth/auth_repository.dart';
+import '../../data/auth/profile_repository.dart';
 import '../theme/jol_theme.dart';
 import '../widgets/jol_button.dart';
 import '../widgets/jol_phone_field.dart';
@@ -57,6 +58,7 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
         context,
         'Account created. You’re signed in.',
       );
+      ref.invalidate(currentUserProvider);
       context.go('/discover');
     } on ApiException catch (error) {
       if (mounted) setState(() => _errorMessage = error.message);

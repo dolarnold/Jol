@@ -10,6 +10,7 @@ class JolTicketTier {
     required this.price,
     this.description = '',
     this.remaining,
+    this.maxPerOrder,
     this.isStudent = false,
     this.isSoldOut = false,
   });
@@ -19,6 +20,9 @@ class JolTicketTier {
   final int price;
   final String description;
   final int? remaining;
+
+  /// Most tickets of this type one person may hold (null = no limit).
+  final int? maxPerOrder;
   final bool isStudent;
   final bool isSoldOut;
 }
@@ -60,6 +64,32 @@ class JolEvent {
     this.fundGoal = 0,
     this.fundContributors = 0,
     this.isApiBacked = false,
+    this.shareUrl,
+    this.coverImageUrl,
+    this.studentDiscountPercent,
+    this.latitude,
+    this.longitude,
+    this.locationHidden = false,
+    this.locationName,
+    this.rawAddress,
+    this.status = 'published',
+    this.maxPlusOnes = 1,
+    this.guestlistCutoffAt,
+    this.viewerIsHost = false,
+    this.startsAt,
+    this.endsAt,
+    this.cameraFilter = true,
+    this.posterStyleName,
+    this.promoterCommissionType,
+    this.promoterCommissionValue,
+    this.fundId,
+    this.fundSuggested = 0,
+    this.fundDescription,
+    this.maxTicketPrice = 250,
+    this.maxPeople = 400,
+    this.maxTicketValue = 20000,
+    this.isJolTeam = false,
+    this.acceptsPromoterRequests = false,
   });
 
   final String id;
@@ -96,8 +126,59 @@ class JolEvent {
   final int fundGoal;
   final int fundContributors;
   final bool isApiBacked;
+  final String? shareUrl;
 
-  factory JolEvent.fromApi(Map<String, dynamic> json) {
+  /// Host-uploaded cover photo; null means the generated poster is used.
+  final String? coverImageUrl;
+  final double? studentDiscountPercent;
+
+  /// Map pin; null when not set or hidden (private event, no RSVP yet).
+  final double? latitude;
+  final double? longitude;
+
+  /// True when the server withheld the exact location from this viewer.
+  final bool locationHidden;
+
+  /// Raw venue name and address as the host entered them (null when hidden).
+  final String? locationName;
+  final String? rawAddress;
+
+  /// "draft", "published", "cancelled" or "completed".
+  final String status;
+  final int maxPlusOnes;
+  final DateTime? guestlistCutoffAt;
+  final bool viewerIsHost;
+  final DateTime? startsAt;
+  final DateTime? endsAt;
+  final bool cameraFilter;
+
+  /// Poster style the host chose (null = picked from the category).
+  final String? posterStyleName;
+  final String? promoterCommissionType;
+  final double? promoterCommissionValue;
+  final String? fundId;
+  final int fundSuggested;
+  final String? fundDescription;
+
+  /// Hosting limits for this event; null means no limit.
+  final int? maxTicketPrice;
+  final int? maxPeople;
+  final int? maxTicketValue;
+
+  /// Run by the JOL team (shown as "JOL Team").
+  final bool isJolTeam;
+
+  /// The organiser lets people ask to promote this event.
+  final bool acceptsPromoterRequests;
+
+  bool get isDraft => status == 'draft';
+  bool get hasPin => latitude != null && longitude != null;
+
+  /// RSVPs are closed once the guestlist cutoff has passed.
+  bool get rsvpClosed =>
+      guestlistCutoffAt != null && DateTime.now().isAfter(guestlistCutoffAt!);
+
+  factory JolEvent.fromApi(Map<String, dynamic> json, {int attending = 0}) {
     final startTime = DateTime.parse(json['start_time'] as String).toLocal();
     final rawEndTime = json['end_time'];
     final endTime = rawEndTime is String
@@ -123,6 +204,7 @@ class JolEvent {
                   price: _apiPrice(tier['price']),
                   description: tier['description'] as String? ?? '',
                   remaining: remaining,
+                  maxPerOrder: (tier['max_per_order'] as num?)?.toInt(),
                   isSoldOut: remaining == 0,
                 );
               })
@@ -137,14 +219,37 @@ class JolEvent {
         ? Map<String, dynamic>.from(contributionData)
         : null;
     final colors = _posterColors(category);
-    final venue = isPrivate
-        ? (json['location_name'] as String? ?? 'Private event')
-        : (json['location_name'] as String? ?? address ?? 'Location TBA');
-    final area = isPrivate
-        ? 'Cape Town'
+    final locationHidden = json['location_hidden'] == true;
+    final locationName = json['location_name'] as String?;
+    final apiArea = json['area'] as String?;
+    final venue = locationHidden
+        ? 'Private event'
+        : (locationName?.isNotEmpty == true
+              ? locationName!
+              : (address ?? 'Location TBA'));
+    final area = apiArea?.isNotEmpty == true
+        ? apiArea!
         : address?.split(',').last.trim().isNotEmpty == true
         ? address!.split(',').last.trim()
         : 'Cape Town';
+    final posterStyleName = json['poster_style'] as String?;
+    final chosenStyle = JolPosterStyle.values
+        .where((style) => style.name == posterStyleName)
+        .firstOrNull;
+    final rawCutoff = json['guestlist_cutoff_at'];
+    final cutoff = rawCutoff is String
+        ? DateTime.tryParse(rawCutoff)?.toLocal()
+        : null;
+    final limits = json['limits'] is Map
+        ? Map<String, dynamic>.from(json['limits'] as Map)
+        : null;
+    int? limit(String key, int fallback) => limits == null
+        ? fallback
+        : (limits[key] as num?)?.round();
+    final commissionType = json['promoter_commission_type'] as String?;
+    final commissionValue = commissionType == 'fixed'
+        ? (json['promoter_commission_amount'] as num?)?.toDouble()
+        : (json['promoter_commission_percent'] as num?)?.toDouble();
 
     return JolEvent(
       id: json['id'].toString(),
@@ -157,10 +262,11 @@ class JolEvent {
       area: area,
       host: host,
       hostInitials: _initials(host),
-      attending: 0,
+      attending: attending,
       description: json['description'] as String? ?? '',
       entryRules: '',
       posterStyle:
+          chosenStyle ??
           JolPosterStyle.values[category.codeUnits.fold<int>(
                 0,
                 (value, unit) => value + unit,
@@ -175,20 +281,58 @@ class JolEvent {
       isPrivate: isPrivate,
       isSoldOut: tiers.isNotEmpty && tiers.every((tier) => tier.isSoldOut),
       isVerifiedHost: false,
+      isAgeRestricted: json['is_age_restricted'] == true,
+      canTransfer: json['allow_ticket_transfer'] == true,
+      allowsPlusOne: json['allow_plus_ones'] != false,
+      rsvpCapacity: (json['rsvp_capacity'] as num?)?.toInt() ?? 0,
+      guestlistCutoff: cutoff == null ? null : _formatTime(cutoff),
       tiers: tiers,
       fundTitle: contribution?['title'] as String?,
       fundRaised: _apiPrice(contribution?['current_amount']),
       fundGoal: _apiPrice(contribution?['target_amount']),
       isApiBacked: true,
+      shareUrl: json['share_url'] as String?,
+      coverImageUrl: switch (json['cover_image_url']) {
+        final String url when url.isNotEmpty => url,
+        _ => null,
+      },
+      studentDiscountPercent: (json['student_discount_percent'] as num?)
+          ?.toDouble(),
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
+      locationHidden: locationHidden,
+      locationName: locationName,
+      rawAddress: address,
+      status: json['status'] as String? ?? 'published',
+      maxPlusOnes: json['allow_plus_ones'] == false
+          ? 0
+          : (json['max_plus_ones'] as num?)?.toInt() ?? 1,
+      guestlistCutoffAt: cutoff,
+      viewerIsHost: json['viewer_is_host'] == true,
+      startsAt: startTime,
+      endsAt: rawEndTime is String ? endTime : null,
+      cameraFilter: json['is_digital_camera_filter'] != false,
+      posterStyleName: chosenStyle?.name,
+      promoterCommissionType: commissionValue == null ? null : commissionType,
+      promoterCommissionValue: commissionValue,
+      fundId: contribution?['id']?.toString(),
+      fundSuggested: _apiPrice(contribution?['suggested_amount']),
+      fundDescription: contribution?['description'] as String?,
+      maxTicketPrice: limit('max_ticket_price', 250),
+      maxPeople: limit('max_people', 400),
+      maxTicketValue: limit('max_ticket_value', 20000),
+      isJolTeam: json['is_jol_team'] == true,
+      acceptsPromoterRequests: json['accepts_promoter_requests'] == true,
     );
   }
 
   String get address =>
-      isPrivate ? '$area, Cape Town' : '$venue, $area, Cape Town';
+      locationHidden ? '$area, Cape Town' : '$venue, $area, Cape Town';
 
   String get attendanceText {
     if (isSoldOut) return 'Sold out';
     if (!isPaid) return 'Free';
+    if (fromPrice == 0) return 'Free tickets';
     return 'From ${formatZar(fromPrice)}';
   }
 }

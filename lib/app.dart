@@ -8,7 +8,6 @@ import 'features/profile/screens/attendee_profile_screens.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/signup_screen.dart';
 import 'ui/screens/splash_screen.dart';
-import 'ui/screens/tab_placeholder_screen.dart';
 import 'ui/screens/welcome_screen.dart';
 import 'ui/screens/widget_gallery_screen.dart';
 import 'ui/theme/jol_theme.dart';

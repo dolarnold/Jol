@@ -16,6 +16,11 @@ final attendeeEventProvider = FutureProvider.family<JolEvent, String>(
   (ref, eventId) => ref.watch(eventRepositoryProvider).fetchEvent(eventId),
 );
 
+/// "Jol Team Top List This Week", in rank order.
+final topListProvider = FutureProvider<List<({JolEvent event, int rank, int attendees})>>(
+  (ref) => ref.watch(eventRepositoryProvider).fetchTopList(),
+);
+
 class EventRepository {
   const EventRepository(this._dio);
 
@@ -45,6 +50,30 @@ class EventRepository {
     }
   }
 
+  Future<List<({JolEvent event, int rank, int attendees})>> fetchTopList() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>('/top-list');
+      final data = response.data?['data'];
+      if (data is! List) return const [];
+      return data
+          .whereType<Map>()
+          .where((item) => item['event'] is Map)
+          .map(
+            (item) => (
+              event: JolEvent.fromApi(
+                Map<String, dynamic>.from(item['event'] as Map),
+                attending: (item['attendees'] as num?)?.toInt() ?? 0,
+              ),
+              rank: (item['rank'] as num?)?.toInt() ?? 0,
+              attendees: (item['attendees'] as num?)?.toInt() ?? 0,
+            ),
+          )
+          .toList(growable: false);
+    } on DioException catch (error) {
+      throw ApiException.fromDio(error);
+    }
+  }
+
   Future<JolEvent> fetchEvent(String eventId) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
@@ -57,7 +86,12 @@ class EventRepository {
           'The event response was not in the expected format.',
         );
       }
-      return JolEvent.fromApi(Map<String, dynamic>.from(event));
+      final stats = data is Map ? data['stats'] : null;
+      final going = stats is Map ? stats['going_count'] : null;
+      return JolEvent.fromApi(
+        Map<String, dynamic>.from(event),
+        attending: going is num ? going.toInt() : 0,
+      );
     } on DioException catch (error) {
       throw ApiException.fromDio(error);
     }

@@ -2,7 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../data/api/api_client.dart';
+import '../../data/push/push_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -21,10 +25,24 @@ class _SplashScreenState extends State<SplashScreen> {
       MediaQuery.disableAnimationsOf(context)
           ? Duration.zero
           : const Duration(milliseconds: 1400),
-      () {
-        if (mounted) context.go('/welcome');
-      },
+      _goToStart,
     );
+  }
+
+  Future<void> _goToStart() async {
+    if (!mounted) return;
+    String? token;
+    final container = ProviderScope.containerOf(context, listen: false);
+    try {
+      token = await container.read(tokenStoreProvider).read();
+    } catch (_) {
+      token = null;
+    }
+    if (token != null && token.isNotEmpty) {
+      unawaited(PushService.register(container.read(apiClientProvider)));
+    }
+    if (!mounted) return;
+    context.go(token != null && token.isNotEmpty ? '/discover' : '/welcome');
   }
 
   @override
