@@ -137,6 +137,7 @@ class DiscoverScreen extends ConsumerWidget {
     final eventsResult = ref.watch(attendeeEventsProvider);
     final tokens = JolTokens.of(context);
     final allEvents = eventsResult.asData?.value ?? const <JolEvent>[];
+    final topList = ref.watch(topListProvider).asData?.value ?? const [];
     final nearMe = ref.watch(discoverNearMeProvider);
     final positionResult = nearMe ? ref.watch(userPositionProvider) : null;
     final position = positionResult?.asData?.value;
@@ -270,6 +271,41 @@ class DiscoverScreen extends ConsumerWidget {
                 ),
               ),
             ),
+          if (topList.isNotEmpty) ...[
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                child: AttendeeSectionTitle('jol team top list this week'),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: SizedBox(
+                // Compact poster card: 122 + 2 × 10 padding.
+                height: 146,
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: topList.length,
+                  separatorBuilder: (context, index) => const SizedBox(width: 10),
+                  itemBuilder: (context, index) {
+                    final item = topList[index];
+                    return SizedBox(
+                      width: MediaQuery.sizeOf(context).width * .82,
+                      child: AttendeePosterCard(
+                        event: item.event,
+                        compact: true,
+                        onTap: () => context.push('/event/${item.event.id}'),
+                        trailing: Text(
+                          '#${index + 1} · ${item.attendees} going',
+                          style: Theme.of(context).textTheme.labelLarge,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
           SliverToBoxAdapter(
             child: _DateStrip(
               today: _referenceToday,
@@ -1115,6 +1151,15 @@ class EventDetailsView extends ConsumerWidget {
                   trailing: const Icon(Icons.flag_outlined),
                   onTap: () => _showReportSheet(context, event),
                 ),
+                if (event.acceptsPromoterRequests && !event.viewerIsHost) ...[
+                  const Divider(height: 12),
+                  JolListRow(
+                    title: 'Request to promote',
+                    subtitle: 'Earn commission selling tickets with your own link',
+                    trailing: const Icon(Icons.campaign_outlined),
+                    onTap: () => _requestToPromote(context, ref, event),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1575,62 +1620,113 @@ Future<void> _showContactSheet(BuildContext context, JolEvent event) async {
   );
 }
 
-class _ContactForm extends StatefulWidget {
+class _ContactForm extends ConsumerStatefulWidget {
   const _ContactForm({required this.event});
 
   final JolEvent event;
 
   @override
-  State<_ContactForm> createState() => _ContactFormState();
+  ConsumerState<_ContactForm> createState() => _ContactFormState();
 }
 
-class _ContactFormState extends State<_ContactForm> {
-  var _includeEmail = true;
+/// Sends POST /events/{id}/contact. The organiser replies through JOL, so
+/// neither side sees the other's email address.
+class _ContactFormState extends ConsumerState<_ContactForm> {
+  static const _topics = {
+    'tickets': 'A question about tickets',
+    'access': 'Access and accessibility',
+    'refunds': 'Refunds',
+    'other': 'Something else',
+  };
+
+  final _message = TextEditingController();
+  var _topic = 'tickets';
+  var _sending = false;
   var _sent = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _message.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(bookingRepositoryProvider)
+          .contactOrganiser(widget.event.id, topic: _topic, body: _message.text);
+      if (mounted) setState(() => _sent = true);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     if (_sent) {
       return const Padding(
         padding: EdgeInsets.only(bottom: 16),
-        child: Text('Your message was sent to JOL to relay to the organiser.'),
+        child: Text(
+          'Sent. The organiser’s reply comes to your Notifications. '
+          'Your email stays private.',
+        ),
       );
     }
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'Your email stays private. JOL relays this message to ${widget.event.host}.',
         ),
         const SizedBox(height: 12),
-        const TextField(
-          decoration: InputDecoration(labelText: 'Topic'),
-          textCapitalization: TextCapitalization.sentences,
+        DropdownButtonFormField<String>(
+          initialValue: _topic,
+          decoration: const InputDecoration(labelText: 'Topic'),
+          items: [
+            for (final entry in _topics.entries)
+              DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+          ],
+          onChanged: (value) => setState(() => _topic = value ?? _topic),
         ),
         const SizedBox(height: 10),
-        const TextField(
+        TextField(
+          controller: _message,
           minLines: 3,
           maxLines: 5,
-          decoration: InputDecoration(labelText: 'Message'),
+          onChanged: (_) => setState(() {}),
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(labelText: 'Message'),
         ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Include my email so they can reply'),
-          value: _includeEmail,
-          onChanged: (value) => setState(() => _includeEmail = value),
-        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ],
+        const SizedBox(height: 12),
         JolButton(
-          label: 'Send message',
+          label: _sending ? 'Sending…' : 'Send message',
           expanded: true,
-          onPressed: () {
-            setState(() => _sent = true);
-            JolToast.show(
-              context,
-              'Your message is sent to JOL to relay privately to ${widget.event.host}.',
-            );
-          },
+          onPressed: _sending || _message.text.trim().length < 5 ? null : _send,
         ),
       ],
     );
+  }
+}
+
+Future<void> _requestToPromote(BuildContext context, WidgetRef ref, JolEvent event) async {
+  try {
+    await ref.read(bookingRepositoryProvider).requestToPromote(event.id);
+    if (context.mounted) {
+      JolToast.show(context, 'Request sent. You’ll get your link when ${event.host} accepts.');
+    }
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
   }
 }
 

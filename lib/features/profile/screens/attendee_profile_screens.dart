@@ -12,6 +12,7 @@ import '../../../data/booking/booking_repository.dart';
 import '../../discover/data/event_repository.dart';
 import '../../discover/models/jol_event.dart';
 import '../../hosting/data/hosting_repository.dart';
+import '../../inbox/inbox_screens.dart';
 import '../../hosting/screens/event_form_screen.dart';
 import '../../../ui/theme/jol_theme.dart';
 import '../../../ui/widgets/jol_button.dart';
@@ -48,6 +49,7 @@ class AttendeeMeScreen extends ConsumerWidget {
               const JolThemeButton(),
             ],
           ),
+          const _AccountWarningsBanner(),
           const SizedBox(height: 18),
           const _ProfileHeaderCard(),
           const SizedBox(height: 14),
@@ -137,7 +139,9 @@ class AttendeeMeScreen extends ConsumerWidget {
                 JolListRow(
                   title: 'Notifications',
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _notConnected(context, 'Notifications'),
+                  onTap: () => Navigator.of(context, rootNavigator: true).push(
+                    MaterialPageRoute<void>(builder: (_) => const NotificationsScreen()),
+                  ),
                 ),
                 const Divider(height: 12),
                 JolListRow(
@@ -155,7 +159,9 @@ class AttendeeMeScreen extends ConsumerWidget {
                 JolListRow(
                   title: 'Help',
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _notConnected(context, 'Help centre'),
+                  onTap: () => Navigator.of(context, rootNavigator: true).push(
+                    MaterialPageRoute<void>(builder: (_) => const SupportMessagesScreen()),
+                  ),
                 ),
               ],
             ),
@@ -738,32 +744,58 @@ class _MetricTile extends StatelessWidget {
   }
 }
 
-class StaffRequestScreen extends StatefulWidget {
+/// "Staff features": ask an organiser to let you scan tickets at their event.
+/// Sends POST /staff-requests; the host or the JOL team approves.
+class StaffRequestScreen extends ConsumerStatefulWidget {
   const StaffRequestScreen({super.key});
 
   @override
-  State<StaffRequestScreen> createState() => _StaffRequestScreenState();
+  ConsumerState<StaffRequestScreen> createState() => _StaffRequestScreenState();
 }
 
-class _StaffRequestScreenState extends State<StaffRequestScreen> {
+class _StaffRequestScreenState extends ConsumerState<StaffRequestScreen> {
+  final _code = TextEditingController();
   final _name = TextEditingController();
   final _mobile = TextEditingController();
   final _note = TextEditingController();
-  String? _organiser;
-  var _submitted = false;
+  String? _sentFor;
+  var _sending = false;
+  String? _error;
 
   @override
   void dispose() {
-    _name.dispose();
-    _mobile.dispose();
-    _note.dispose();
+    for (final controller in [_code, _name, _mobile, _note]) {
+      controller.dispose();
+    }
     super.dispose();
+  }
+
+  Future<void> _send() async {
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      final title = await ref
+          .read(bookingRepositoryProvider)
+          .requestStaffAccess(
+            inviteCode: _code.text,
+            name: _name.text,
+            phone: _mobile.text,
+            note: _note.text,
+          );
+      if (mounted) setState(() => _sentFor = title);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final tokens = JolTokens.of(context);
-    if (_submitted) {
+    if (_sentFor != null) {
       return Scaffold(
         appBar: AppBar(title: const Text('staff features')),
         body: Center(
@@ -779,7 +811,11 @@ class _StaffRequestScreenState extends State<StaffRequestScreen> {
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 8),
-                Text('Waiting for $_organiser to approve you.'),
+                Text(
+                  'Waiting for the organiser of $_sentFor to approve you. '
+                  'You’ll get a notification when they do.',
+                  textAlign: TextAlign.center,
+                ),
                 const SizedBox(height: 20),
                 JolButton(
                   label: 'Done',
@@ -792,6 +828,10 @@ class _StaffRequestScreenState extends State<StaffRequestScreen> {
         ),
       );
     }
+    final ready =
+        _code.text.trim().isNotEmpty &&
+        _name.text.trim().isNotEmpty &&
+        _mobile.text.trim().isNotEmpty;
     return Scaffold(
       appBar: AppBar(title: const Text('staff features')),
       body: ListView(
@@ -803,29 +843,17 @@ class _StaffRequestScreenState extends State<StaffRequestScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Choose a verified organiser. They’ll need to approve your request.',
+            'Ask the organiser for their event’s invite code. They’ll need '
+            'to approve your request before you can scan tickets.',
             style: Theme.of(context).textTheme.bodyMedium
                 ?.copyWith(color: tokens.muted),
           ),
           const SizedBox(height: 18),
-          DropdownButtonFormField<String>(
-            initialValue: _organiser,
-            decoration: const InputDecoration(labelText: 'Organiser'),
-            items: const [
-              DropdownMenuItem(
-                value: 'Kasi Collective',
-                child: Text('Kasi Collective'),
-              ),
-              DropdownMenuItem(
-                value: 'Blue Room Live',
-                child: Text('Blue Room Live'),
-              ),
-              DropdownMenuItem(
-                value: 'Still Studio',
-                child: Text('Still Studio'),
-              ),
-            ],
-            onChanged: (value) => setState(() => _organiser = value),
+          TextField(
+            controller: _code,
+            autocorrect: false,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(labelText: 'Event invite code'),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -848,23 +876,86 @@ class _StaffRequestScreenState extends State<StaffRequestScreen> {
             maxLines: 4,
             decoration: const InputDecoration(labelText: 'Note (optional)'),
           ),
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
           const SizedBox(height: 18),
           JolButton(
-            label: 'Send request',
+            label: _sending ? 'Sending…' : 'Send request',
             expanded: true,
-            onPressed:
-                _organiser == null ||
-                    _name.text.trim().isEmpty ||
-                    _mobile.text.trim().isEmpty
-                ? null
-                : () {
-                    JolToast.show(
-                      context,
-                      'Your staff access request is queued for approval.',
-                    );
-                    setState(() => _submitted = true);
-                  },
+            onPressed: !ready || _sending ? null : _send,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Unread warnings from the JOL team, until the person taps "I understand".
+class _AccountWarningsBanner extends ConsumerWidget {
+  const _AccountWarningsBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final warnings = ref.watch(accountWarningsProvider).asData?.value ?? const [];
+    if (warnings.isEmpty) return const SizedBox.shrink();
+    final error = Theme.of(context).colorScheme.error;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        children: [
+          for (final warning in warnings)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: JolCard(
+                border: true,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.warning_amber_rounded, color: error),
+                        const SizedBox(width: 8),
+                        Text(
+                          'A warning from the JOL team',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(warning.reason),
+                    const SizedBox(height: 4),
+                    Text(
+                      formatEventDate(warning.createdAt),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () async {
+                          try {
+                            await ref
+                                .read(bookingRepositoryProvider)
+                                .acknowledgeWarning(warning.id);
+                            ref.invalidate(accountWarningsProvider);
+                          } on ApiException catch (failure) {
+                            if (context.mounted) {
+                              JolToast.show(context, failure.message);
+                            }
+                          }
+                        },
+                        child: const Text('I understand'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );

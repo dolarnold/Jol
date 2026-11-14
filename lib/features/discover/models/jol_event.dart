@@ -85,6 +85,11 @@ class JolEvent {
     this.fundId,
     this.fundSuggested = 0,
     this.fundDescription,
+    this.maxTicketPrice = 250,
+    this.maxPeople = 400,
+    this.maxTicketValue = 20000,
+    this.isJolTeam = false,
+    this.acceptsPromoterRequests = false,
   });
 
   final String id;
@@ -155,6 +160,17 @@ class JolEvent {
   final int fundSuggested;
   final String? fundDescription;
 
+  /// Hosting limits for this event; null means no limit.
+  final int? maxTicketPrice;
+  final int? maxPeople;
+  final int? maxTicketValue;
+
+  /// Run by the JOL team (shown as "JOL Team").
+  final bool isJolTeam;
+
+  /// The organiser lets people ask to promote this event.
+  final bool acceptsPromoterRequests;
+
   bool get isDraft => status == 'draft';
   bool get hasPin => latitude != null && longitude != null;
 
@@ -224,6 +240,12 @@ class JolEvent {
     final cutoff = rawCutoff is String
         ? DateTime.tryParse(rawCutoff)?.toLocal()
         : null;
+    final limits = json['limits'] is Map
+        ? Map<String, dynamic>.from(json['limits'] as Map)
+        : null;
+    int? limit(String key, int fallback) => limits == null
+        ? fallback
+        : (limits[key] as num?)?.round();
     final commissionType = json['promoter_commission_type'] as String?;
     final commissionValue = commissionType == 'fixed'
         ? (json['promoter_commission_amount'] as num?)?.toDouble()
@@ -296,6 +318,11 @@ class JolEvent {
       fundId: contribution?['id']?.toString(),
       fundSuggested: _apiPrice(contribution?['suggested_amount']),
       fundDescription: contribution?['description'] as String?,
+      maxTicketPrice: limit('max_ticket_price', 250),
+      maxPeople: limit('max_people', 400),
+      maxTicketValue: limit('max_ticket_value', 20000),
+      isJolTeam: json['is_jol_team'] == true,
+      acceptsPromoterRequests: json['accepts_promoter_requests'] == true,
     );
   }
 

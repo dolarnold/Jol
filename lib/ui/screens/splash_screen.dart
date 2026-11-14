@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/api/api_client.dart';
+import '../../data/push/push_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -31,13 +32,14 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _goToStart() async {
     if (!mounted) return;
     String? token;
+    final container = ProviderScope.containerOf(context, listen: false);
     try {
-      token = await ProviderScope.containerOf(
-        context,
-        listen: false,
-      ).read(tokenStoreProvider).read();
+      token = await container.read(tokenStoreProvider).read();
     } catch (_) {
       token = null;
+    }
+    if (token != null && token.isNotEmpty) {
+      unawaited(PushService.register(container.read(apiClientProvider)));
     }
     if (!mounted) return;
     context.go(token != null && token.isNotEmpty ? '/discover' : '/welcome');

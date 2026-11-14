@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 
 import '../api/api_client.dart';
+import '../push/push_service.dart';
 
 final authRepositoryProvider = Provider<AuthRepository>(
   (ref) => AuthRepository(
@@ -39,6 +42,7 @@ class AuthRepository {
   /// Revokes the token on the server (if it is still valid) and removes it
   /// from the device.
   Future<void> logout() async {
+    await PushService.unregister(_dio);
     try {
       await _dio.post<void>('/auth/logout');
     } on DioException {
@@ -61,6 +65,8 @@ class AuthRepository {
       }
       try {
         await _tokenStore.write(token);
+        // The API client reads the saved token, so register afterwards.
+        unawaited(PushService.register(_dio));
       } on PlatformException {
         throw const ApiException(
           'Your account was created, but the sign-in token could not be '

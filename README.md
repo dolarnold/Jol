@@ -58,6 +58,20 @@ On build servers such as Codemagic, set `GOOGLE_MAPS_API_KEY` as an
 environment variable for Android, and write `ios/Flutter/Maps.xcconfig` in a
 pre-build script for iOS.
 
+## Push notifications (Firebase)
+
+1. `flutter pub add firebase_core firebase_messaging`
+2. `dart pub global activate flutterfire_cli`, then `flutterfire configure` in
+   this folder and pick your Firebase project. It adds `google-services.json`
+   (Android) and `GoogleService-Info.plist` (iOS) and the Gradle setup.
+3. iOS only: in Xcode add the **Push Notifications** capability and
+   **Background Modes → Remote notifications**, and upload an APNs key in
+   Firebase → Project settings → Cloud Messaging.
+4. In the website's superadmin, open **Integrations & API Keys** and paste the
+   Firebase **service account** JSON from the same project.
+
+Without step 2 the app still runs, just without push.
+
 ## Tests
 
 ```shell

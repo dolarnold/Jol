@@ -61,9 +61,11 @@ class _TierFields {
 
 class _EventFormScreenState extends ConsumerState<EventFormScreen> {
   static const _categories = ['nightlife', 'fitness', 'networking'];
-  static const _maxPrice = 250;
-  static const _maxPeople = 400;
-  static const _maxTicketValue = 20000;
+  // Casual hosting limits. The JOL team can raise them for one event, and
+  // JOL Team / commercial events have none (null).
+  static const _defaultMaxPrice = 250;
+  static const _defaultMaxPeople = 400;
+  static const _defaultMaxTicketValue = 20000;
   static const _posterLabels = {
     'sunset': 'Sunset',
     'boldType': 'Bold type',
@@ -110,6 +112,16 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
   String? _error;
 
   JolEvent? get _existing => widget.existing;
+
+  int? get _maxPrice =>
+      _existing == null ? _defaultMaxPrice : _existing!.maxTicketPrice;
+  int? get _maxPeople =>
+      _existing == null ? _defaultMaxPeople : _existing!.maxPeople;
+  int? get _maxTicketValue =>
+      _existing == null ? _defaultMaxTicketValue : _existing!.maxTicketValue;
+
+  /// Guest limit for free events follows the people limit.
+  int get _maxGuests => _maxPeople ?? 100000;
   bool get _isEdit => _existing != null;
 
   /// Tickets already on the event (edit only); kept as they are.
@@ -260,7 +272,7 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
         if (tier.name.text.trim().isEmpty) return 'Name each ticket type.';
         final label = tier.name.text.trim();
         if (tier.priceValue < 1) return 'Enter a price for $label.';
-        if (tier.priceValue > _maxPrice) {
+        if (_maxPrice != null && tier.priceValue > _maxPrice!) {
           return 'Tickets can be at most R$_maxPrice.';
         }
         if (tier.capacityValue < 1) return 'Enter how many $label tickets.';
@@ -272,10 +284,10 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
           }
         }
       }
-      if (_totalPeople > _maxPeople) {
+      if (_maxPeople != null && _totalPeople > _maxPeople!) {
         return 'You can sell at most $_maxPeople tickets in total.';
       }
-      if (_totalValue > _maxTicketValue) {
+      if (_maxTicketValue != null && _totalValue > _maxTicketValue!) {
         return 'Lower the prices or the number of tickets.';
       }
       final discount = _studentDiscount.text.trim();
@@ -307,8 +319,8 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
       if (limit.isNotEmpty) {
         final value = int.tryParse(limit);
         if (value == null || value < 1) return 'Enter a valid guest limit.';
-        if (value > _maxPeople) {
-          return 'Free events can have at most $_maxPeople guests.';
+        if (value > _maxGuests) {
+          return 'Free events can have at most $_maxGuests guests.';
         }
       }
       if (_hasFund) {
@@ -876,10 +888,10 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
                       controller: tier.price,
                       keyboardType: TextInputType.number,
                       onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Price',
                         prefixText: 'R ',
-                        helperText: 'Up to R$_maxPrice',
+                        helperText: _maxPrice == null ? null : 'Up to R$_maxPrice',
                       ),
                     ),
                   ),
@@ -918,7 +930,7 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
       ),
     ),
     Text(
-      '$_totalPeople of $_maxPeople people · '
+      '$_totalPeople${_maxPeople == null ? '' : ' of $_maxPeople'} people · '
       'total ticket value ${formatZar(_totalValue)}',
       style: TextStyle(color: tokens.muted),
     ),
@@ -973,9 +985,11 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
     TextField(
       controller: _rsvpLimit,
       keyboardType: TextInputType.number,
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         labelText: 'Guest limit (optional)',
-        helperText: 'Up to $_maxPeople, plus-ones count. Empty means no limit.',
+        helperText: _maxPeople == null
+            ? 'Plus-ones count. Empty means no limit.'
+            : 'Up to $_maxPeople, plus-ones count. Empty means no limit.',
       ),
     ),
     SwitchListTile(

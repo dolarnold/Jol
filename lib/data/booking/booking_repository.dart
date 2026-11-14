@@ -143,6 +143,12 @@ final myRsvpsProvider = FutureProvider<List<JolRsvp>>(
   (ref) => ref.watch(bookingRepositoryProvider).myRsvps(),
 );
 
+/// Unread warnings from the JOL team, shown on the Me tab.
+final accountWarningsProvider =
+    FutureProvider<List<({String id, String reason, DateTime createdAt})>>(
+      (ref) => ref.watch(bookingRepositoryProvider).unreadWarnings(),
+    );
+
 final myEventsProvider = FutureProvider<List<HostedEvent>>(
   (ref) => ref.watch(bookingRepositoryProvider).myEvents(),
 );
@@ -353,6 +359,74 @@ class BookingRepository {
         final data = response.data?['data'];
         return data is Map ? data['recipient_name'] as String? : null;
       });
+
+  /// "Contact organiser": JOL relays the message so emails stay private.
+  Future<void> contactOrganiser(
+    String eventId, {
+    required String topic,
+    required String body,
+  }) => _call(() async {
+    await _dio.post<void>(
+      '/events/${Uri.encodeComponent(eventId)}/contact',
+      data: {'topic': topic, 'body': body.trim()},
+    );
+  });
+
+  Future<void> requestToPromote(String eventId, {String? message}) =>
+      _call(() async {
+        await _dio.post<void>(
+          '/events/${Uri.encodeComponent(eventId)}/promote-request',
+          data: {
+            if (message != null && message.trim().isNotEmpty)
+              'message': message.trim(),
+          },
+        );
+      });
+
+  /// Asks to scan tickets at the event with [inviteCode]. Returns its title.
+  Future<String> requestStaffAccess({
+    required String inviteCode,
+    required String name,
+    required String phone,
+    String? note,
+  }) => _call(() async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/staff-requests',
+      data: {
+        'invite_code': inviteCode.trim(),
+        'name': name.trim(),
+        'phone': phone.trim(),
+        if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+      },
+    );
+    final data = response.data?['data'];
+    final request = data is Map ? data['staff_request'] : null;
+    final event = request is Map ? request['event'] : null;
+    return event is Map ? event['title'] as String? ?? 'the event' : 'the event';
+  });
+
+  Future<List<({String id, String reason, DateTime createdAt})>>
+  unreadWarnings() => _call(() async {
+    final response = await _dio.get<Map<String, dynamic>>('/account/warnings');
+    return _list(response.data?['data'])
+        .where((item) => item['acknowledged'] != true)
+        .map(
+          (item) => (
+            id: '${item['id']}',
+            reason: item['reason'] as String? ?? '',
+            createdAt:
+                DateTime.tryParse('${item['created_at']}')?.toLocal() ??
+                DateTime.now(),
+          ),
+        )
+        .toList(growable: false);
+  });
+
+  Future<void> acknowledgeWarning(String id) => _call(() async {
+    await _dio.post<void>(
+      '/account/warnings/${Uri.encodeComponent(id)}/acknowledge',
+    );
+  });
 
   Future<void> cancelEvent(String eventId) => _call(() async {
     await _dio.delete<void>('/events/${Uri.encodeComponent(eventId)}');
