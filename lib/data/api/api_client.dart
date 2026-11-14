@@ -5,12 +5,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 const _apiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
-String get defaultApiBaseUrl {
-  if (defaultTargetPlatform == TargetPlatform.android && !kIsWeb) {
-    return 'http://10.0.2.2:8000/api/v1';
-  }
-  return 'http://127.0.0.1:8000/api/v1';
-}
+/// Live Laravel Cloud backend. Override for local testing with
+/// `--dart-define=API_BASE_URL=http://<your-pc-ip>:8000/api/v1`
+const defaultApiBaseUrl =
+    'https://jol-backend-production-xgp5ka.laravel.cloud/api/v1';
 
 String get configuredApiBaseUrl =>
     _apiBaseUrl.isEmpty ? defaultApiBaseUrl : _apiBaseUrl;
@@ -47,8 +45,9 @@ final apiClientProvider = Provider<Dio>((ref) {
   final dio = Dio(
     BaseOptions(
       baseUrl: configuredApiBaseUrl.replaceFirst(RegExp(r'/+$'), ''),
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 20),
+      // Laravel Cloud can take a while to wake up after being idle.
+      connectTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 30),
       headers: const {'Accept': 'application/json'},
     ),
   );

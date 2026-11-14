@@ -792,6 +792,7 @@ class _TicketListCard extends ConsumerWidget {
               secondary: Color(event.posterSecondary),
               title: event.title,
               dateStamp: eventDateStamp(event.date),
+              imageUrl: event.coverImageUrl,
               size: const Size(82, 100),
             ),
             const SizedBox(width: 14),
@@ -884,6 +885,7 @@ class _TicketQrScreenState extends ConsumerState<TicketQrScreen> {
               title: event.title,
               area: event.area,
               dateStamp: eventDateStamp(event.date),
+              imageUrl: event.coverImageUrl,
               size: Size(MediaQuery.sizeOf(context).width - 40, 210),
             ),
             const SizedBox(height: 16),
@@ -1011,19 +1013,23 @@ Future<void> _showTransferSheet(
   );
 }
 
-class _TransferForm extends StatefulWidget {
+class _TransferForm extends ConsumerStatefulWidget {
   const _TransferForm({required this.event, required this.ticketId});
 
   final JolEvent event;
   final String ticketId;
 
   @override
-  State<_TransferForm> createState() => _TransferFormState();
+  ConsumerState<_TransferForm> createState() => _TransferFormState();
 }
 
-class _TransferFormState extends State<_TransferForm> {
+/// Sends POST /tickets/{id}/transfer. The ticket moves to the other person's
+/// JOL account with a new code, so this phone's QR stops working.
+class _TransferFormState extends ConsumerState<_TransferForm> {
   final _recipient = TextEditingController();
-  var _confirmed = false;
+  var _sending = false;
+  String? _sentTo;
+  String? _error;
 
   @override
   void dispose() {
@@ -1031,57 +1037,117 @@ class _TransferFormState extends State<_TransferForm> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_confirmed) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
-        child: Text('Ticket transferred. Your QR code has been disabled.'),
-      );
+  Future<void> _confirm() async {
+    final recipient = _recipient.text.trim();
+    final looksValid =
+        recipient.contains('@') ||
+        RegExp(r'^\+?[0-9\s()-]{9,}$').hasMatch(recipient);
+    if (!looksValid) {
+      setState(() => _error = 'Enter their email or mobile number.');
+      return;
     }
-    return Consumer(
-      builder: (context, ref, _) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Send by @username, mobile number or email.'),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _recipient,
-            decoration: const InputDecoration(labelText: 'Recipient'),
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Transfer this ticket?'),
+        content: Text(
+          'Your ticket to ${widget.event.title} goes to $recipient. '
+          'This can’t be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep it'),
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'This cannot be undone. Your QR stops working once the transfer is complete.',
-          ),
-          const SizedBox(height: 12),
-          JolButton(
-            label: 'Confirm transfer',
-            expanded: true,
-            onPressed: _recipient.text.trim().isEmpty
-                ? null
-                : () {
-                    final recipient = _recipient.text.trim();
-                    final isValidRecipient =
-                        recipient.startsWith('@') ||
-                        recipient.contains('@') ||
-                        RegExp(r'^\+?[0-9\s()-]{7,}$').hasMatch(recipient);
-
-                    if (!isValidRecipient) {
-                      JolToast.show(
-                        context,
-                        'Use an @username, email or mobile number.',
-                      );
-                      return;
-                    }
-
-                    ref
-                        .read(attendeeControllerProvider.notifier)
-                        .transferTicket(widget.ticketId);
-                    setState(() => _confirmed = true);
-                  },
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Transfer'),
           ),
         ],
       ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      final name = await ref
+          .read(bookingRepositoryProvider)
+          .transferTicket(widget.ticketId, recipient);
+      ref.read(attendeeControllerProvider.notifier).transferTicket(widget.ticketId);
+      ref.invalidate(myTicketsProvider);
+      if (mounted) setState(() => _sentTo = name ?? recipient);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    if (_sentTo != null) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Ticket sent to $_sentTo. It’s in their Tickets tab now.'),
+            const SizedBox(height: 8),
+            Text(
+              'Your QR code no longer works.',
+              style: TextStyle(color: tokens.muted),
+            ),
+            const SizedBox(height: 16),
+            JolButton(
+              label: 'Done',
+              expanded: true,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Send it to the email or mobile number on their JOL account. '
+          'They need to sign up first if they don’t have one.',
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _recipient,
+          keyboardType: TextInputType.emailAddress,
+          autocorrect: false,
+          onChanged: (_) => setState(() => _error = null),
+          decoration: const InputDecoration(
+            labelText: 'Email or mobile number',
+          ),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ],
+        const SizedBox(height: 12),
+        Text(
+          'This can’t be undone. Your QR stops working once the ticket is sent.',
+          style: TextStyle(color: tokens.muted),
+        ),
+        const SizedBox(height: 12),
+        JolButton(
+          label: _sending ? 'Sending…' : 'Transfer ticket',
+          expanded: true,
+          onPressed: _sending || _recipient.text.trim().isEmpty
+              ? null
+              : _confirm,
+        ),
+      ],
     );
   }
 }
@@ -1253,6 +1319,7 @@ class ShareEventScreen extends ConsumerWidget {
                   title: event.title,
                   area: event.area,
                   dateStamp: eventDateStamp(event.date),
+                  imageUrl: event.coverImageUrl,
                   size: const Size(100, 126),
                 ),
                 const SizedBox(width: 12),

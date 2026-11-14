@@ -11,6 +11,8 @@ import '../../../data/auth/profile_repository.dart';
 import '../../../data/booking/booking_repository.dart';
 import '../../discover/data/event_repository.dart';
 import '../../discover/models/jol_event.dart';
+import '../../hosting/data/hosting_repository.dart';
+import '../../hosting/screens/event_form_screen.dart';
 import '../../../ui/theme/jol_theme.dart';
 import '../../../ui/widgets/jol_button.dart';
 import '../../../ui/widgets/jol_card.dart';
@@ -335,7 +337,7 @@ class HostDashboardScreen extends ConsumerWidget {
                     trailing: const Icon(Icons.add_circle_outline),
                     onTap: () => Navigator.of(context, rootNavigator: true).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => const _CreateEventScreen(),
+                        builder: (_) => const EventFormScreen(),
                       ),
                     ),
                   ),
@@ -388,7 +390,11 @@ class _HostedEventCard extends ConsumerWidget {
                   Text(event.title, style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
                   Text(
-                    '${formatEventDate(event.date)} · ${event.startTime}',
+                    [
+                      if (event.isDraft) 'DRAFT',
+                      if (event.status == 'cancelled') 'CANCELLED',
+                      '${formatEventDate(event.date)} · ${event.startTime}',
+                    ].join(' · '),
                     style: TextStyle(color: tokens.muted),
                   ),
                   const SizedBox(height: 4),
@@ -405,6 +411,14 @@ class _HostedEventCard extends ConsumerWidget {
             tooltip: 'Event actions',
             onSelected: (action) async {
               switch (action) {
+                case 'edit':
+                  await Navigator.of(context, rootNavigator: true).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => EventFormScreen(existing: event),
+                    ),
+                  );
+                case 'publish':
+                  await _publishEvent(context, ref, event);
                 case 'guests':
                   await _showGuestsSheet(context, ref, event);
                 case 'share':
@@ -413,11 +427,21 @@ class _HostedEventCard extends ConsumerWidget {
                   await _cancelEvent(context, ref, event);
               }
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'guests', child: Text('Guest list')),
-              PopupMenuItem(value: 'share', child: Text('Share')),
-              PopupMenuItem(value: 'cancel', child: Text('Cancel event')),
-            ],
+            itemBuilder: (_) {
+              final upcoming = event.date.isAfter(DateTime.now());
+              final active = event.status != 'cancelled';
+              return [
+                if (event.isDraft && upcoming)
+                  const PopupMenuItem(value: 'publish', child: Text('Publish')),
+                if (upcoming && active)
+                  const PopupMenuItem(value: 'edit', child: Text('Edit event')),
+                const PopupMenuItem(value: 'guests', child: Text('Guest list')),
+                if (!event.isDraft)
+                  const PopupMenuItem(value: 'share', child: Text('Share')),
+                if (active)
+                  const PopupMenuItem(value: 'cancel', child: Text('Cancel event')),
+              ];
+            },
           ),
         ],
       ),
@@ -463,6 +487,21 @@ Future<void> _showGuestsSheet(
   );
 }
 
+Future<void> _publishEvent(
+  BuildContext context,
+  WidgetRef ref,
+  JolEvent event,
+) async {
+  try {
+    await ref.read(hostingRepositoryProvider).publish(event.id);
+    ref.invalidate(myEventsProvider);
+    ref.invalidate(attendeeEventsProvider);
+    if (context.mounted) JolToast.show(context, 'Your event is live.');
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
+  }
+}
+
 Future<void> _cancelEvent(
   BuildContext context,
   WidgetRef ref,
@@ -493,276 +532,6 @@ Future<void> _cancelEvent(
     if (context.mounted) JolToast.show(context, 'Event cancelled.');
   } on ApiException catch (error) {
     if (context.mounted) JolToast.show(context, error.message);
-  }
-}
-
-/// Casual hosting: max R250 per ticket and 400 people.
-class _CreateEventScreen extends ConsumerStatefulWidget {
-  const _CreateEventScreen();
-
-  @override
-  ConsumerState<_CreateEventScreen> createState() => _CreateEventScreenState();
-}
-
-class _CreateEventScreenState extends ConsumerState<_CreateEventScreen> {
-  static const _categories = ['nightlife', 'fitness', 'networking'];
-  static const _maxPrice = 250;
-  static const _maxPeople = 400;
-
-  final _title = TextEditingController();
-  final _venue = TextEditingController();
-  final _address = TextEditingController();
-  final _description = TextEditingController();
-  final _ticketName = TextEditingController(text: 'General');
-  final _price = TextEditingController();
-  final _capacity = TextEditingController();
-  var _category = _categories.first;
-  DateTime? _date;
-  TimeOfDay _start = const TimeOfDay(hour: 20, minute: 0);
-  TimeOfDay _end = const TimeOfDay(hour: 23, minute: 0);
-  var _isPrivate = false;
-  var _isPaid = false;
-  var _saving = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    for (final controller in [
-      _title,
-      _venue,
-      _address,
-      _description,
-      _ticketName,
-      _price,
-      _capacity,
-    ]) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  DateTime _at(DateTime date, TimeOfDay time) =>
-      DateTime(date.year, date.month, date.day, time.hour, time.minute);
-
-  String? _validate() {
-    if (_title.text.trim().isEmpty) return 'Give your event a name.';
-    if (_date == null) return 'Pick a date.';
-    if (!_at(_date!, _start).isAfter(DateTime.now())) {
-      return 'The start time must be in the future.';
-    }
-    if (_isPaid) {
-      final price = int.tryParse(_price.text.trim());
-      final capacity = int.tryParse(_capacity.text.trim());
-      if (price == null || price < 1) return 'Enter a ticket price.';
-      if (price > _maxPrice) return 'Tickets can be at most R$_maxPrice.';
-      if (capacity == null || capacity < 1) return 'Enter how many tickets.';
-      if (capacity > _maxPeople) return 'You can sell at most $_maxPeople tickets.';
-      if (price * capacity > 20000) {
-        return 'Lower the price or the number of tickets.';
-      }
-    }
-    return null;
-  }
-
-  Future<void> _save() async {
-    final problem = _validate();
-    if (problem != null) {
-      setState(() => _error = problem);
-      return;
-    }
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
-    final start = _at(_date!, _start);
-    var end = _at(_date!, _end);
-    if (!end.isAfter(start)) end = end.add(const Duration(days: 1));
-    try {
-      await ref
-          .read(bookingRepositoryProvider)
-          .createEvent(
-            title: _title.text.trim(),
-            category: _category,
-            start: start,
-            end: end,
-            description: _description.text.trim(),
-            venue: _venue.text.trim(),
-            address: _address.text.trim(),
-            isPrivate: _isPrivate,
-            ticketName: _isPaid ? _ticketName.text.trim() : null,
-            ticketPrice: _isPaid ? int.parse(_price.text.trim()) : null,
-            ticketCapacity: _isPaid ? int.parse(_capacity.text.trim()) : null,
-          );
-      ref.invalidate(myEventsProvider);
-      ref.invalidate(attendeeEventsProvider);
-      if (!mounted) return;
-      JolToast.show(context, 'Your event is live.');
-      Navigator.of(context).pop();
-    } on ApiException catch (error) {
-      if (mounted) setState(() => _error = error.message);
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final tokens = JolTokens.of(context);
-    final price = int.tryParse(_price.text.trim()) ?? 0;
-    final capacity = int.tryParse(_capacity.text.trim()) ?? 0;
-    return Scaffold(
-      appBar: AppBar(title: const Text('create event')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        children: [
-          TextField(
-            controller: _title,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(labelText: 'Event name'),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _category,
-            decoration: const InputDecoration(labelText: 'Category'),
-            items: [
-              for (final category in _categories)
-                DropdownMenuItem(value: category, child: Text(category)),
-            ],
-            onChanged: (value) => setState(() => _category = value ?? _category),
-          ),
-          const SizedBox(height: 12),
-          JolListRow(
-            title: _date == null ? 'Pick a date' : formatEventDate(_date!),
-            trailing: const Icon(Icons.calendar_month_outlined),
-            onTap: () async {
-              final now = DateTime.now();
-              final picked = await showDatePicker(
-                context: context,
-                firstDate: DateTime(now.year, now.month, now.day),
-                lastDate: now.add(const Duration(days: 365)),
-                initialDate: _date ?? now,
-              );
-              if (picked != null) setState(() => _date = picked);
-            },
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: JolListRow(
-                  title: 'Starts ${_start.format(context)}',
-                  onTap: () async {
-                    final picked = await showTimePicker(
-                      context: context,
-                      initialTime: _start,
-                    );
-                    if (picked != null) setState(() => _start = picked);
-                  },
-                ),
-              ),
-              Expanded(
-                child: JolListRow(
-                  title: 'Ends ${_end.format(context)}',
-                  onTap: () async {
-                    final picked = await showTimePicker(
-                      context: context,
-                      initialTime: _end,
-                    );
-                    if (picked != null) setState(() => _end = picked);
-                  },
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _venue,
-            decoration: const InputDecoration(labelText: 'Venue'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _address,
-            decoration: const InputDecoration(
-              labelText: 'Address',
-              helperText: 'End with the area, e.g. "12 Bree St, City Centre"',
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _description,
-            minLines: 3,
-            maxLines: 6,
-            decoration: const InputDecoration(labelText: 'About this event'),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Private event'),
-            subtitle: const Text('Only people with the invite code can find it'),
-            value: _isPrivate,
-            onChanged: (value) => setState(() => _isPrivate = value),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Sell tickets'),
-            subtitle: const Text('Off means a free RSVP event'),
-            value: _isPaid,
-            onChanged: (value) => setState(() => _isPaid = value),
-          ),
-          if (_isPaid) ...[
-            TextField(
-              controller: _ticketName,
-              decoration: const InputDecoration(labelText: 'Ticket name'),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _price,
-                    keyboardType: TextInputType.number,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      labelText: 'Price',
-                      prefixText: 'R ',
-                      helperText: 'Up to R$_maxPrice',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _capacity,
-                    keyboardType: TextInputType.number,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      labelText: 'Tickets',
-                      helperText: 'Up to $_maxPeople',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Total ticket value: ${formatZar(price * capacity)}',
-              style: TextStyle(color: tokens.muted),
-            ),
-          ],
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              _error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-          const SizedBox(height: 20),
-          JolButton(
-            label: _saving ? 'Publishing…' : 'Publish event',
-            expanded: true,
-            onPressed: _saving ? null : _save,
-          ),
-        ],
-      ),
-    );
   }
 }
 
@@ -839,7 +608,7 @@ class _StaffDashboardScreenState extends ConsumerState<StaffDashboardScreen> {
             )
           else ...[
             DropdownButtonFormField<String>(
-              value: selected!.event.id,
+              initialValue: selected!.event.id,
               decoration: const InputDecoration(labelText: 'Event'),
               items: [
                 for (final item in events)
@@ -897,7 +666,11 @@ class _StaffDashboardScreenState extends ConsumerState<StaffDashboardScreen> {
               JolCard(
                 border: true,
                 child: JolListRow(
-                  title: _result!.success ? 'Admit' : 'Do not admit',
+                  title: !_result!.success
+                      ? 'Do not admit'
+                      : _result!.requiresIdCheck
+                      ? 'Check ID · 18+ only'
+                      : 'Admit',
                   subtitle: [
                     _result!.message,
                     if (_result!.guestName != null) _result!.guestName!,

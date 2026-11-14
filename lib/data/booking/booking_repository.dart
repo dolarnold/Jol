@@ -103,11 +103,15 @@ class ScanResult {
     required this.success,
     required this.message,
     this.guestName,
+    this.requiresIdCheck = false,
   });
 
   final bool success;
   final String message;
   final String? guestName;
+
+  /// 18+ event: door staff must check the guest's ID before letting them in.
+  final bool requiresIdCheck;
 }
 
 enum PurchaseOutcome { success, pending, declined }
@@ -319,53 +323,6 @@ class BookingRepository {
     }).toList(growable: false);
   });
 
-  /// Creates a casual event and, if [ticketName] is given, its first tier.
-  Future<String> createEvent({
-    required String title,
-    required String category,
-    required DateTime start,
-    DateTime? end,
-    String? description,
-    String? venue,
-    String? address,
-    bool isPrivate = false,
-    String? ticketName,
-    int? ticketPrice,
-    int? ticketCapacity,
-  }) => _call(() async {
-    final response = await _dio.post<Map<String, dynamic>>(
-      '/events',
-      data: {
-        'title': title,
-        'type': 'casual',
-        'category': category,
-        'start_time': start.toUtc().toIso8601String(),
-        if (end != null) 'end_time': end.toUtc().toIso8601String(),
-        if (description != null && description.isNotEmpty) 'description': description,
-        if (venue != null && venue.isNotEmpty) 'location_name': venue,
-        if (address != null && address.isNotEmpty) 'address': address,
-        'is_private': isPrivate,
-      },
-    );
-    final data = response.data?['data'];
-    final event = data is Map ? data['event'] : null;
-    if (event is! Map) {
-      throw const ApiException('The event was saved but the response was unexpected.');
-    }
-    final eventId = '${event['id']}';
-    if (ticketName != null && ticketName.isNotEmpty && ticketPrice != null) {
-      await _dio.post<void>(
-        '/events/$eventId/ticket-tiers',
-        data: {
-          'name': ticketName,
-          'price': ticketPrice,
-          'capacity': ?ticketCapacity,
-        },
-      );
-    }
-    return eventId;
-  });
-
   /// Host or staff only: GET /events/{id}/guests.
   Future<List<({String name, String status, int plusOnes})>> guests(
     String eventId,
@@ -385,6 +342,18 @@ class BookingRepository {
         .toList(growable: false);
   });
 
+  /// Sends a ticket to another JOL account by email or mobile number.
+  /// Returns the recipient's name.
+  Future<String?> transferTicket(String ticketId, String recipient) =>
+      _call(() async {
+        final response = await _dio.post<Map<String, dynamic>>(
+          '/tickets/${Uri.encodeComponent(ticketId)}/transfer',
+          data: {'recipient': recipient.trim()},
+        );
+        final data = response.data?['data'];
+        return data is Map ? data['recipient_name'] as String? : null;
+      });
+
   Future<void> cancelEvent(String eventId) => _call(() async {
     await _dio.delete<void>('/events/${Uri.encodeComponent(eventId)}');
   });
@@ -403,6 +372,7 @@ class BookingRepository {
         success: true,
         message: 'Ticket verified',
         guestName: ticket is Map ? ticket['guest_name'] as String? : null,
+        requiresIdCheck: data is Map && data['requires_id_check'] == true,
       );
     } on DioException catch (error) {
       final data = error.response?.data;

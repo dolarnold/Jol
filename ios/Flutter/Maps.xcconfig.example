@@ -1,0 +1,2 @@
+// Copy to Maps.xcconfig (not committed) and paste your iOS Maps key.
+GOOGLE_MAPS_API_KEY=your-ios-maps-key

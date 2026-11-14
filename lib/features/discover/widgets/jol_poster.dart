@@ -16,6 +16,7 @@ class JolPoster extends StatelessWidget {
     required this.size,
     this.area,
     this.imageFile,
+    this.imageUrl,
   });
 
   final JolPosterStyle style;
@@ -27,8 +28,34 @@ class JolPoster extends StatelessWidget {
   final String? area;
   final File? imageFile;
 
+  /// Cover photo from the API, shown under the poster text when set.
+  final String? imageUrl;
+
   @override
   Widget build(BuildContext context) {
+    final art = CustomPaint(
+      painter: _PosterPainter(
+        style: style,
+        primary: primary,
+        secondary: secondary,
+        title: title,
+        dateStamp: dateStamp,
+        area: area,
+        paintArt: true,
+      ),
+    );
+    final text = CustomPaint(
+      painter: _PosterPainter(
+        style: style,
+        primary: primary,
+        secondary: secondary,
+        title: title,
+        dateStamp: dateStamp,
+        area: area,
+        paintArt: false,
+      ),
+    );
+    final url = imageUrl;
     return SizedBox.fromSize(
       size: size,
       child: ClipRRect(
@@ -36,32 +63,22 @@ class JolPoster extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (imageFile != null)
-              Image.file(imageFile!, fit: BoxFit.cover)
+            if (imageFile != null) ...[
+              Image.file(imageFile!, fit: BoxFit.cover),
+              text,
+            ] else if (url != null)
+              Image.network(
+                url,
+                fit: BoxFit.cover,
+                // Draw the photo with the poster text over it; fall back to
+                // the generated poster while loading or if the image fails.
+                frameBuilder: (context, child, frame, _) => frame == null
+                    ? art
+                    : Stack(fit: StackFit.expand, children: [child, text]),
+                errorBuilder: (_, _, _) => art,
+              )
             else
-              CustomPaint(
-                painter: _PosterPainter(
-                  style: style,
-                  primary: primary,
-                  secondary: secondary,
-                  title: title,
-                  dateStamp: dateStamp,
-                  area: area,
-                  paintArt: true,
-                ),
-              ),
-            if (imageFile != null)
-              CustomPaint(
-                painter: _PosterPainter(
-                  style: style,
-                  primary: primary,
-                  secondary: secondary,
-                  title: title,
-                  dateStamp: dateStamp,
-                  area: area,
-                  paintArt: false,
-                ),
-              ),
+              art,
           ],
         ),
       ),

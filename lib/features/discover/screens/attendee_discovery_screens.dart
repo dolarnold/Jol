@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:add_2_calendar/add_2_calendar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +16,9 @@ import '../../../ui/widgets/jol_segmented.dart';
 import '../../../ui/widgets/jol_sheet.dart';
 import '../../../ui/widgets/jol_toast.dart';
 import '../../attendee/state/attendee_controller.dart';
+import '../../maps/discover_map_screen.dart';
+import '../../maps/event_location_card.dart';
+import '../../maps/maps_repository.dart';
 import '../data/event_repository.dart';
 import '../models/jol_event.dart';
 import '../widgets/attendee_components.dart';
@@ -108,6 +113,18 @@ class _InterestsScreenState extends ConsumerState<InterestsScreen> {
   }
 }
 
+/// Whether Discover sorts events by distance from the phone.
+class DiscoverNearMeNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void set(bool value) => state = value;
+}
+
+final discoverNearMeProvider = NotifierProvider<DiscoverNearMeNotifier, bool>(
+  DiscoverNearMeNotifier.new,
+);
+
 class DiscoverScreen extends ConsumerWidget {
   const DiscoverScreen({super.key});
 
@@ -120,7 +137,29 @@ class DiscoverScreen extends ConsumerWidget {
     final eventsResult = ref.watch(attendeeEventsProvider);
     final tokens = JolTokens.of(context);
     final allEvents = eventsResult.asData?.value ?? const <JolEvent>[];
+    final nearMe = ref.watch(discoverNearMeProvider);
+    final positionResult = nearMe ? ref.watch(userPositionProvider) : null;
+    final position = positionResult?.asData?.value;
+    double? distanceTo(JolEvent event) => position == null || !event.hasPin
+        ? null
+        : distanceMetres(
+            position.latitude,
+            position.longitude,
+            event.latitude!,
+            event.longitude!,
+          );
     final events = _filteredEvents(state, allEvents);
+    if (position != null) {
+      // Closest first; events without a map pin go last.
+      events.sort((a, b) {
+        final da = distanceTo(a);
+        final db = distanceTo(b);
+        if (da == null && db == null) return a.date.compareTo(b.date);
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return da.compareTo(db);
+      });
+    }
 
     return SafeArea(
       child: CustomScrollView(
@@ -164,6 +203,48 @@ class DiscoverScreen extends ConsumerWidget {
                           : formatEventDate(state.selectedDate!),
                     ),
                   ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: 'Map view',
+                    icon: const Icon(Icons.map_outlined),
+                    onPressed: () => Navigator.of(context, rootNavigator: true)
+                        .push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const DiscoverMapScreen(),
+                          ),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Row(
+                children: [
+                  FilterChip(
+                    avatar: const Icon(Icons.near_me_outlined, size: 18),
+                    label: const Text('Near me'),
+                    selected: nearMe,
+                    onSelected: (value) {
+                      ref.read(discoverNearMeProvider.notifier).set(value);
+                      if (value) ref.invalidate(userPositionProvider);
+                    },
+                  ),
+                  const SizedBox(width: 10),
+                  if (nearMe && positionResult?.isLoading == true)
+                    const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else if (nearMe && position == null)
+                    Expanded(
+                      child: Text(
+                        'Turn on location to sort by distance.',
+                        style: TextStyle(color: tokens.muted),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -303,8 +384,10 @@ class DiscoverScreen extends ConsumerWidget {
                     const SizedBox(height: 12),
                 itemBuilder: (context, index) {
                   final event = events[index];
+                  final distance = distanceTo(event);
                   return AttendeePosterCard(
                     event: event,
+                    distance: distance == null ? null : formatDistance(distance),
                     onTap: () => context.push('/event/${event.id}'),
                     trailing: Icon(
                       event.isSoldOut
@@ -751,7 +834,40 @@ class EventScreen extends ConsumerWidget {
         ),
       );
     }
+    return EventDetailsView(event: event);
+  }
+}
 
+/// The host's preview of an event before it's saved: the real event page
+/// with every button switched off.
+class EventPreviewScreen extends StatelessWidget {
+  const EventPreviewScreen({super.key, required this.event, this.coverFile});
+
+  final JolEvent event;
+  final File? coverFile;
+
+  @override
+  Widget build(BuildContext context) =>
+      EventDetailsView(event: event, preview: true, coverFile: coverFile);
+}
+
+/// The event page. [preview] disables every action for the host's preview.
+class EventDetailsView extends ConsumerWidget {
+  const EventDetailsView({
+    super.key,
+    required this.event,
+    this.preview = false,
+    this.coverFile,
+  });
+
+  final JolEvent event;
+  final bool preview;
+
+  /// Photo picked on the form but not uploaded yet (preview only).
+  final File? coverFile;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(attendeeControllerProvider);
     final controller = ref.read(attendeeControllerProvider.notifier);
     final tokens = JolTokens.of(context);
@@ -760,12 +876,19 @@ class EventScreen extends ConsumerWidget {
     final isRsvped =
         state.rsvpEvents.contains(event.id) ||
         myRsvps.any((rsvp) => rsvp.event.id == event.id);
-    final hasAccess = !event.isPrivate || isRsvped;
+    // The server hides private locations from guests who haven't RSVP'd.
+    final hasAccess = event.isApiBacked
+        ? !event.locationHidden
+        : (!event.isPrivate || isRsvped);
+    final entryText = [
+      if (event.isAgeRestricted) '18+ only · bring a valid ID.',
+      if (event.entryRules.isNotEmpty) event.entryRules,
+    ].join(' ');
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('event'),
-        actions: [
+        title: Text(preview ? 'preview' : 'event'),
+        actions: preview ? null : [
           AttendeeIconButton(
             icon: state.savedEvents.contains(event.id)
                 ? Icons.bookmark
@@ -785,6 +908,16 @@ class EventScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
         children: [
+          if (preview) ...[
+            JolCard(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                'This is how guests will see your event. Buttons are off in the preview.',
+                style: TextStyle(color: tokens.muted),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           JolPoster(
             style: event.posterStyle,
             primary: Color(event.posterPrimary),
@@ -792,6 +925,8 @@ class EventScreen extends ConsumerWidget {
             title: event.title,
             area: event.area,
             dateStamp: eventDateStamp(event.date),
+            imageUrl: event.coverImageUrl,
+            imageFile: coverFile,
             size: Size(MediaQuery.sizeOf(context).width - 40, 350),
           ),
           const SizedBox(height: 20),
@@ -814,8 +949,11 @@ class EventScreen extends ConsumerWidget {
                   title: hasAccess ? event.venue : 'Address shared after RSVP',
                   subtitle: hasAccess
                       ? '${event.area}, Cape Town'
-                      : 'Exact address is private',
+                      : 'Somewhere in ${event.area}',
                   trailing: const Icon(Icons.location_on_outlined),
+                  onTap: hasAccess && !preview
+                      ? () => showDirectionsSheet(context, event)
+                      : null,
                 ),
                 const Divider(height: 18),
                 JolListRow(
@@ -824,8 +962,9 @@ class EventScreen extends ConsumerWidget {
                       ? 'Verified organiser · ${event.hostEventCount} events'
                       : 'Organiser',
                   trailing: TextButton(
-                    onPressed: () =>
-                        controller.toggleFollowOrganiser(event.host),
+                    onPressed: preview
+                        ? null
+                        : () => controller.toggleFollowOrganiser(event.host),
                     child: Text(
                       state.followedOrganisers.contains(event.host)
                           ? 'Following'
@@ -836,6 +975,10 @@ class EventScreen extends ConsumerWidget {
               ],
             ),
           ),
+          if (event.isApiBacked && (event.hasPin || event.locationHidden)) ...[
+            const SizedBox(height: 14),
+            EventLocationCard(event: event, enabled: !preview),
+          ],
           const SizedBox(height: 16),
           JolCard(
             child: Column(
@@ -843,13 +986,15 @@ class EventScreen extends ConsumerWidget {
               children: [
                 AttendeeSectionTitle('about this event'),
                 Text(event.description),
-                const SizedBox(height: 14),
-                Text(
-                  'GETTING IN',
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-                const SizedBox(height: 6),
-                Text(event.entryRules),
+                if (entryText.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Text(
+                    'GETTING IN',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(entryText),
+                ],
               ],
             ),
           ),
@@ -877,7 +1022,7 @@ class EventScreen extends ConsumerWidget {
                     variant: isJoined
                         ? JolButtonVariant.secondary
                         : JolButtonVariant.primary,
-                    onPressed: isJoined
+                    onPressed: isJoined || preview
                         ? null
                         : () => _showGuestlistSheet(context, ref, event),
                   ),
@@ -898,12 +1043,24 @@ class EventScreen extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   AttendeeSectionTitle('free RSVP'),
-                  Text('${event.rsvpCapacity} spots · no ticket payment'),
+                  Text(
+                    [
+                      '${event.rsvpCapacity} spots',
+                      if (event.isApiBacked && event.maxPlusOnes > 0)
+                        'up to ${event.maxPlusOnes} plus-one${event.maxPlusOnes == 1 ? '' : 's'}',
+                      if (event.guestlistCutoff != null)
+                        'RSVPs close ${event.guestlistCutoff}',
+                    ].join(' · '),
+                  ),
                   const SizedBox(height: 12),
                   JolButton(
-                    label: isRsvped ? 'You’re going' : 'RSVP free',
+                    label: isRsvped
+                        ? 'You’re going'
+                        : event.rsvpClosed
+                        ? 'RSVPs closed'
+                        : 'RSVP free',
                     expanded: true,
-                    onPressed: isRsvped
+                    onPressed: isRsvped || preview || event.rsvpClosed
                         ? null
                         : () => _showRsvpSheet(context, ref, event),
                   ),
@@ -924,17 +1081,21 @@ class EventScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 12),
                   JolButton(
-                    label: 'Contribute',
+                    label: event.fundSuggested > 0
+                        ? 'Contribute · suggested ${formatZar(event.fundSuggested)}'
+                        : 'Contribute',
                     expanded: true,
                     variant: JolButtonVariant.purchase,
-                    onPressed: () => context.push('/fund/${event.id}'),
+                    onPressed: preview
+                        ? null
+                        : () => context.push('/fund/${event.id}'),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 14),
           ],
-          JolCard(
+          if (!preview) JolCard(
             child: Column(
               children: [
                 JolListRow(
@@ -988,12 +1149,16 @@ class EventScreen extends ConsumerWidget {
                     : 'Get tickets · from ${formatZar(event.fromPrice)}')
               : isRsvped
               ? 'You’re going'
+              : event.rsvpClosed
+              ? 'RSVPs closed'
               : 'RSVP free',
           expanded: true,
           variant: event.isPaid
               ? JolButtonVariant.purchase
               : JolButtonVariant.primary,
-          onPressed: event.isSoldOut
+          onPressed: preview
+              ? null
+              : event.isSoldOut
               ? () => JolToast.show(
                   context,
                   'We’ll notify you when tickets open.',
@@ -1011,7 +1176,7 @@ class EventScreen extends ConsumerWidget {
                   );
                   context.push('/tickets/choose/${event.id}');
                 }
-              : isRsvped
+              : isRsvped || event.rsvpClosed
               ? null
               : () => _showRsvpSheet(context, ref, event),
         ),
@@ -1254,7 +1419,13 @@ class _RsvpForm extends ConsumerStatefulWidget {
 
 class _RsvpFormState extends ConsumerState<_RsvpForm> {
   final _name = TextEditingController();
-  var _plusOne = false;
+  var _plusOnes = 0;
+
+  bool get _plusOne => _plusOnes > 0;
+
+  /// API events set how many plus-ones each guest may bring.
+  int get _maxPlusOnes =>
+      widget.event.isApiBacked ? widget.event.maxPlusOnes : 1;
   var _sending = false;
   String? _error;
 
@@ -1274,7 +1445,7 @@ class _RsvpFormState extends ConsumerState<_RsvpForm> {
           .read(bookingRepositoryProvider)
           .rsvp(
             widget.event.id,
-            plusOnes: _plusOne ? 1 : 0,
+            plusOnes: _plusOnes,
             guestName: _name.text,
             note: widget.guestlist ? 'Guestlist' : null,
           );
@@ -1282,7 +1453,7 @@ class _RsvpFormState extends ConsumerState<_RsvpForm> {
       if (widget.guestlist) {
         controller.joinGuestlist(widget.event.id, plusOne: _plusOne);
       } else {
-        controller.rsvp(widget.event.id, plusOne: _plusOne ? 1 : 0);
+        controller.rsvp(widget.event.id, plusOne: _plusOnes);
       }
       ref.invalidate(myRsvpsProvider);
       ref.invalidate(attendeeEventProvider(widget.event.id));
@@ -1317,12 +1488,29 @@ class _RsvpFormState extends ConsumerState<_RsvpForm> {
           textCapitalization: TextCapitalization.words,
         ),
         const SizedBox(height: 8),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(widget.guestlist ? 'Add a plus-one' : 'Bring a plus-one'),
-          value: _plusOne,
-          onChanged: (value) => setState(() => _plusOne = value),
-        ),
+        if (_maxPlusOnes == 1)
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(widget.guestlist ? 'Add a plus-one' : 'Bring a plus-one'),
+            value: _plusOne,
+            onChanged: (value) => setState(() => _plusOnes = value ? 1 : 0),
+          )
+        else if (_maxPlusOnes > 1)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: DropdownButtonFormField<int>(
+              initialValue: _plusOnes,
+              decoration: const InputDecoration(labelText: 'Plus-ones'),
+              items: [
+                for (var count = 0; count <= _maxPlusOnes; count++)
+                  DropdownMenuItem(
+                    value: count,
+                    child: Text(count == 0 ? 'Just me' : '+$count'),
+                  ),
+              ],
+              onChanged: (value) => setState(() => _plusOnes = value ?? 0),
+            ),
+          ),
         if (_error != null) ...[
           Text(
             _error!,

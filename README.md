@@ -41,6 +41,23 @@ flutter run --dart-define=API_BASE_URL=https://your-api.example.com/api/v1
 Live event browsing is connected. RSVP submission and ticket checkout still
 need to be wired to the Laravel API.
 
+## Google Maps
+
+The location picker, event maps, "Near me" and the Discover map use Google
+Maps. Address search goes through the backend (`/api/v1/maps/*`), so the app
+only needs a Maps SDK key:
+
+- **Android:** add `GOOGLE_MAPS_API_KEY=your-android-key` to
+  `android/local.properties` (not committed).
+- **iOS:** copy `ios/Flutter/Maps.xcconfig.example` to
+  `ios/Flutter/Maps.xcconfig` (not committed) and paste your iOS key.
+- **Backend:** set `GOOGLE_MAPS_SERVER_KEY` in the Laravel `.env` (Places API
+  (New) and Geocoding API enabled).
+
+On build servers such as Codemagic, set `GOOGLE_MAPS_API_KEY` as an
+environment variable for Android, and write `ios/Flutter/Maps.xcconfig` in a
+pre-build script for iOS.
+
 ## Tests
 
 ```shell
