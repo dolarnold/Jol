@@ -1186,7 +1186,9 @@ class EventDetailsView extends ConsumerWidget {
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
         child: JolButton(
-          label: event.isSoldOut
+          label: event.isApiBacked
+              ? 'Bookings coming soon'
+              : event.isSoldOut
               ? 'Sold out · Notify me'
               : event.isPaid
               ? (event.fromPrice == 0
