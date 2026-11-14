@@ -63,6 +63,11 @@ final apiClientProvider = Provider<Dio>((ref) {
       },
     ),
   );
+  if (kDebugMode) {
+    dio.interceptors.add(
+      LogInterceptor(requestHeader: true, requestBody: true, responseBody: true),
+    );
+  }
   ref.onDispose(dio.close);
   return dio;
 });

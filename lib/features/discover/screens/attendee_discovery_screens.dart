@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../data/api/api_client.dart';
+import '../../../data/booking/booking_repository.dart';
 import '../../../data/mocks/mock_attendee_events.dart';
 import '../../../ui/theme/jol_theme.dart';
 import '../../../ui/widgets/jol_button.dart';
@@ -583,12 +585,8 @@ class SearchScreen extends ConsumerWidget {
         .toSet()
         .where((host) => query.isEmpty || host.toLowerCase().contains(query))
         .toList();
-    final people = mockPeople
-        .where(
-          (person) =>
-              query.isEmpty || person.name.toLowerCase().contains(query),
-        )
-        .toList();
+    // People search needs a backend endpoint; until then show none.
+    const people = <MockPerson>[];
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
@@ -758,7 +756,10 @@ class EventScreen extends ConsumerWidget {
     final controller = ref.read(attendeeControllerProvider.notifier);
     final tokens = JolTokens.of(context);
     final isJoined = state.joinedGuestlists.contains(event.id);
-    final isRsvped = state.rsvpEvents.contains(event.id);
+    final myRsvps = ref.watch(myRsvpsProvider).asData?.value ?? const [];
+    final isRsvped =
+        state.rsvpEvents.contains(event.id) ||
+        myRsvps.any((rsvp) => rsvp.event.id == event.id);
     final hasAccess = !event.isPrivate || isRsvped;
 
     return Scaffold(
@@ -970,22 +971,6 @@ class EventScreen extends ConsumerWidget {
                   style: Theme.of(context).textTheme.bodyMedium
                       ?.copyWith(color: tokens.muted),
                 ),
-                const SizedBox(height: 10),
-                for (final person
-                    in mockPeople.where((person) => person.isPublic).take(3))
-                  Material(
-                    color: tokens.surface,
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: CircleAvatar(
-                        backgroundColor: tokens.surface2,
-                        child: Text(person.name.substring(0, 1)),
-                      ),
-                      title: Text(person.name),
-                      subtitle: Text(person.note),
-                      minVerticalPadding: 8,
-                    ),
-                  ),
               ],
             ),
           ),
@@ -995,22 +980,20 @@ class EventScreen extends ConsumerWidget {
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
         child: JolButton(
-          label: event.isApiBacked
-              ? 'Bookings coming soon'
-              : event.isSoldOut
+          label: event.isSoldOut
               ? 'Sold out · Notify me'
               : event.isPaid
-              ? 'Get tickets · from ${formatZar(event.fromPrice)}'
-              : event.rsvpCapacity > 0
-              ? (isRsvped ? 'You’re going' : 'RSVP free')
-              : 'Join guestlist',
+              ? (event.fromPrice == 0
+                    ? 'Get free tickets'
+                    : 'Get tickets · from ${formatZar(event.fromPrice)}')
+              : isRsvped
+              ? 'You’re going'
+              : 'RSVP free',
           expanded: true,
           variant: event.isPaid
               ? JolButtonVariant.purchase
               : JolButtonVariant.primary,
-          onPressed: event.isApiBacked
-              ? null
-              : event.isSoldOut
+          onPressed: event.isSoldOut
               ? () => JolToast.show(
                   context,
                   'We’ll notify you when tickets open.',
@@ -1028,13 +1011,9 @@ class EventScreen extends ConsumerWidget {
                   );
                   context.push('/tickets/choose/${event.id}');
                 }
-              : event.rsvpCapacity > 0
-              ? isRsvped
-                    ? null
-                    : () => _showRsvpSheet(context, ref, event)
-              : isJoined
+              : isRsvped
               ? null
-              : () => _showGuestlistSheet(context, ref, event),
+              : () => _showRsvpSheet(context, ref, event),
         ),
       ),
     );
@@ -1217,7 +1196,10 @@ Future<void> _showDateSheet(BuildContext context, WidgetRef ref) async {
           Builder(
             builder: (context) {
               final date = today.add(Duration(days: index));
-              final hasEvents = mockAttendeeEvents.any(
+              final liveEvents =
+                  ref.read(attendeeEventsProvider).asData?.value ??
+                  const <JolEvent>[];
+              final hasEvents = liveEvents.any(
                 (event) => _sameDay(event.date, date),
               );
               return JolListRow(
@@ -1243,49 +1225,7 @@ Future<void> _showGuestlistSheet(
   await JolSheet.show<void>(
     context: context,
     title: 'join the guestlist',
-    child: Consumer(
-      builder: (context, ref, _) {
-        final plusOne = ref.watch(
-          attendeeControllerProvider.select((state) => state.guestlistPlusOne),
-        );
-        final stateController = ref.read(attendeeControllerProvider.notifier);
-        final tokens = JolTokens.of(context);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Your name will be shared with the host for entry.'),
-            const SizedBox(height: 16),
-            const TextField(
-              decoration: InputDecoration(labelText: 'Name on the list'),
-              textCapitalization: TextCapitalization.words,
-            ),
-            const SizedBox(height: 8),
-            if (event.allowsPlusOne)
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Add a plus-one'),
-                value: plusOne,
-                onChanged: stateController.setGuestlistPlusOne,
-              ),
-            Text(
-              'You can manage this pass from Tickets.',
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: tokens.muted),
-            ),
-            const SizedBox(height: 12),
-            JolButton(
-              label: 'Confirm guestlist',
-              expanded: true,
-              onPressed: () {
-                stateController.joinGuestlist(event.id, plusOne: plusOne);
-                Navigator.pop(context);
-                JolToast.show(context, 'You’re on the guestlist.');
-              },
-            ),
-          ],
-        );
-      },
-    ),
+    child: _RsvpForm(event: event, guestlist: true),
   );
 }
 
@@ -1297,40 +1237,117 @@ Future<void> _showRsvpSheet(
   await JolSheet.show<void>(
     context: context,
     title: 'RSVP for free',
-    child: Consumer(
-      builder: (context, ref, _) {
-        final plusOne = ref.watch(
-          attendeeControllerProvider.select((state) => state.rsvpPlusOne),
-        );
-        final controller = ref.read(attendeeControllerProvider.notifier);
-        return Column(
-          children: [
-            const TextField(
-              decoration: InputDecoration(labelText: 'Name'),
-              textCapitalization: TextCapitalization.words,
-            ),
-            if (event.allowsPlusOne)
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Bring a plus-one'),
-                value: plusOne == 1,
-                onChanged: (value) => controller.setRsvpPlusOne(value ? 1 : 0),
-              ),
-            const SizedBox(height: 12),
-            JolButton(
-              label: 'Confirm RSVP',
-              expanded: true,
-              onPressed: () {
-                controller.rsvp(event.id, plusOne: plusOne);
-                Navigator.pop(context);
-                JolToast.show(context, 'Your RSVP is confirmed.');
-              },
-            ),
-          ],
-        );
-      },
-    ),
+    child: _RsvpForm(event: event, guestlist: false),
   );
+}
+
+/// Sends POST /events/{id}/rsvp. A guestlist spot is an RSVP with status going.
+class _RsvpForm extends ConsumerStatefulWidget {
+  const _RsvpForm({required this.event, required this.guestlist});
+
+  final JolEvent event;
+  final bool guestlist;
+
+  @override
+  ConsumerState<_RsvpForm> createState() => _RsvpFormState();
+}
+
+class _RsvpFormState extends ConsumerState<_RsvpForm> {
+  final _name = TextEditingController();
+  var _plusOne = false;
+  var _sending = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      await ref
+          .read(bookingRepositoryProvider)
+          .rsvp(
+            widget.event.id,
+            plusOnes: _plusOne ? 1 : 0,
+            guestName: _name.text,
+            note: widget.guestlist ? 'Guestlist' : null,
+          );
+      final controller = ref.read(attendeeControllerProvider.notifier);
+      if (widget.guestlist) {
+        controller.joinGuestlist(widget.event.id, plusOne: _plusOne);
+      } else {
+        controller.rsvp(widget.event.id, plusOne: _plusOne ? 1 : 0);
+      }
+      ref.invalidate(myRsvpsProvider);
+      ref.invalidate(attendeeEventProvider(widget.event.id));
+      if (!mounted) return;
+      Navigator.pop(context);
+      JolToast.show(
+        context,
+        widget.guestlist ? 'You’re on the guestlist.' : 'Your RSVP is confirmed.',
+      );
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (widget.guestlist)
+          const Text('Your name will be shared with the host for entry.'),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _name,
+          decoration: InputDecoration(
+            labelText: widget.guestlist ? 'Name on the list' : 'Name',
+            helperText: 'Leave blank to use your profile name',
+          ),
+          textCapitalization: TextCapitalization.words,
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(widget.guestlist ? 'Add a plus-one' : 'Bring a plus-one'),
+          value: _plusOne,
+          onChanged: (value) => setState(() => _plusOne = value),
+        ),
+        if (_error != null) ...[
+          Text(
+            _error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+          const SizedBox(height: 8),
+        ],
+        Text(
+          'You can find this pass in Tickets.',
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: tokens.muted),
+        ),
+        const SizedBox(height: 12),
+        JolButton(
+          label: _sending
+              ? 'Sending…'
+              : widget.guestlist
+              ? 'Confirm guestlist'
+              : 'Confirm RSVP',
+          expanded: true,
+          onPressed: _sending ? null : _submit,
+        ),
+      ],
+    );
+  }
 }
 
 Future<void> _showCalendarSheet(BuildContext context, JolEvent event) async {
@@ -1437,18 +1454,42 @@ Future<void> _showReportSheet(BuildContext context, JolEvent event) async {
   );
 }
 
-class _ReportForm extends StatefulWidget {
+class _ReportForm extends ConsumerStatefulWidget {
   const _ReportForm({required this.event});
 
   final JolEvent event;
 
   @override
-  State<_ReportForm> createState() => _ReportFormState();
+  ConsumerState<_ReportForm> createState() => _ReportFormState();
 }
 
-class _ReportFormState extends State<_ReportForm> {
+class _ReportFormState extends ConsumerState<_ReportForm> {
   String? _reason;
   bool _submitted = false;
+  bool _sending = false;
+  final _details = TextEditingController();
+
+  @override
+  void dispose() {
+    _details.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    setState(() => _sending = true);
+    try {
+      await ref
+          .read(bookingRepositoryProvider)
+          .report(widget.event.id, reason: _reason!, details: _details.text);
+      if (!mounted) return;
+      setState(() => _submitted = true);
+      JolToast.show(context, 'Your report is sent to JOL for moderation review.');
+    } on ApiException catch (error) {
+      if (mounted) JolToast.show(context, error.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1491,24 +1532,17 @@ class _ReportFormState extends State<_ReportForm> {
               ),
             ),
           ),
-        const TextField(
+        TextField(
+          controller: _details,
           minLines: 2,
           maxLines: 4,
-          decoration: InputDecoration(labelText: 'Details (optional)'),
+          decoration: const InputDecoration(labelText: 'Details (optional)'),
         ),
         const SizedBox(height: 12),
         JolButton(
-          label: 'Send report',
+          label: _sending ? 'Sending…' : 'Send report',
           expanded: true,
-          onPressed: _reason == null
-              ? null
-              : () {
-                  setState(() => _submitted = true);
-                  JolToast.show(
-                    context,
-                    'Your report is sent to JOL for moderation review.',
-                  );
-                },
+          onPressed: _reason == null || _sending ? null : _send,
         ),
       ],
     );

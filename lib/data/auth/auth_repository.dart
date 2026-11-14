@@ -36,6 +36,17 @@ class AuthRepository {
     });
   }
 
+  /// Revokes the token on the server (if it is still valid) and removes it
+  /// from the device.
+  Future<void> logout() async {
+    try {
+      await _dio.post<void>('/auth/logout');
+    } on DioException {
+      // The token may already be expired or revoked; clear it anyway.
+    }
+    await _tokenStore.clear();
+  }
+
   Future<void> _authenticate(String path, Map<String, Object?> payload) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(

@@ -10,6 +10,7 @@ class JolTicketTier {
     required this.price,
     this.description = '',
     this.remaining,
+    this.maxPerOrder,
     this.isStudent = false,
     this.isSoldOut = false,
   });
@@ -19,6 +20,9 @@ class JolTicketTier {
   final int price;
   final String description;
   final int? remaining;
+
+  /// Most tickets of this type one person may hold (null = no limit).
+  final int? maxPerOrder;
   final bool isStudent;
   final bool isSoldOut;
 }
@@ -60,6 +64,7 @@ class JolEvent {
     this.fundGoal = 0,
     this.fundContributors = 0,
     this.isApiBacked = false,
+    this.shareUrl,
   });
 
   final String id;
@@ -96,8 +101,9 @@ class JolEvent {
   final int fundGoal;
   final int fundContributors;
   final bool isApiBacked;
+  final String? shareUrl;
 
-  factory JolEvent.fromApi(Map<String, dynamic> json) {
+  factory JolEvent.fromApi(Map<String, dynamic> json, {int attending = 0}) {
     final startTime = DateTime.parse(json['start_time'] as String).toLocal();
     final rawEndTime = json['end_time'];
     final endTime = rawEndTime is String
@@ -123,6 +129,7 @@ class JolEvent {
                   price: _apiPrice(tier['price']),
                   description: tier['description'] as String? ?? '',
                   remaining: remaining,
+                  maxPerOrder: (tier['max_per_order'] as num?)?.toInt(),
                   isSoldOut: remaining == 0,
                 );
               })
@@ -157,7 +164,7 @@ class JolEvent {
       area: area,
       host: host,
       hostInitials: _initials(host),
-      attending: 0,
+      attending: attending,
       description: json['description'] as String? ?? '',
       entryRules: '',
       posterStyle:
@@ -180,6 +187,7 @@ class JolEvent {
       fundRaised: _apiPrice(contribution?['current_amount']),
       fundGoal: _apiPrice(contribution?['target_amount']),
       isApiBacked: true,
+      shareUrl: json['share_url'] as String?,
     );
   }
 
@@ -189,6 +197,7 @@ class JolEvent {
   String get attendanceText {
     if (isSoldOut) return 'Sold out';
     if (!isPaid) return 'Free';
+    if (fromPrice == 0) return 'Free tickets';
     return 'From ${formatZar(fromPrice)}';
   }
 }

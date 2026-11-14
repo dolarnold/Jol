@@ -57,7 +57,12 @@ class EventRepository {
           'The event response was not in the expected format.',
         );
       }
-      return JolEvent.fromApi(Map<String, dynamic>.from(event));
+      final stats = data is Map ? data['stats'] : null;
+      final going = stats is Map ? stats['going_count'] : null;
+      return JolEvent.fromApi(
+        Map<String, dynamic>.from(event),
+        attending: going is num ? going.toInt() : 0,
+      );
     } on DioException catch (error) {
       throw ApiException.fromDio(error);
     }
