@@ -9,6 +9,8 @@ What changed in the JOL app, newest first. The version is `version:` in
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-26
+
 ### Added (wallet)
 - "Add to Apple Wallet" (iPhone) and "Save to Google Wallet" (Android) on the ticket screen, once JOL sets them up in Admin → Integrations. The pass has the same QR code as the app.
 
