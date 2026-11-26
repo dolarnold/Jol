@@ -1,7 +1,11 @@
+import 'dart:async';
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -929,6 +933,903 @@ class MySplitsScreen extends ConsumerWidget {
                     ),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+// ---- The vibe: countdown, dress code, playlist, video ----------------------
+
+/// The host's colour, or the app's accent.
+Color eventAccent(BuildContext context, JolEvent event) =>
+    event.themeColor == null ? JolTokens.of(context).accent : Color(event.themeColor!);
+
+/// Countdown, dress code, playlist and video under the event title.
+class EventVibe extends StatefulWidget {
+  const EventVibe({super.key, required this.event, this.enabled = true});
+
+  final JolEvent event;
+  final bool enabled;
+
+  @override
+  State<EventVibe> createState() => _EventVibeState();
+}
+
+class _EventVibeState extends State<EventVibe> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String? get _countdown {
+    final start = widget.event.startsAt ?? widget.event.date;
+    final left = start.difference(DateTime.now());
+    if (!widget.event.showCountdown || left.isNegative) return null;
+    final days = left.inDays;
+    final hours = left.inHours % 24;
+    final minutes = left.inMinutes % 60;
+    if (days > 30) return null;
+    return [if (days > 0) '${days}d', '${hours}h', if (days == 0) '${minutes}m'].join(' ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final event = widget.event;
+    final accent = eventAccent(context, event);
+    final countdown = _countdown;
+    final chips = <Widget>[
+      if (countdown != null)
+        _VibeChip(icon: Icons.timer_outlined, label: 'Starts in $countdown', color: accent),
+      if (event.dressCode != null)
+        _VibeChip(icon: Icons.checkroom_outlined, label: event.dressCode!, color: accent),
+      if (event.playlistUrl != null)
+        _VibeChip(
+          icon: Icons.queue_music,
+          label: event.playlistService == null || event.playlistService == 'Playlist'
+              ? 'Playlist'
+              : 'Playlist on ${event.playlistService}',
+          color: accent,
+          onTap: widget.enabled
+              ? () => launchUrl(Uri.parse(event.playlistUrl!), mode: LaunchMode.externalApplication)
+              : null,
+        ),
+      if (event.coverVideoUrl != null)
+        _VibeChip(
+          icon: Icons.play_circle_outline,
+          label: 'Watch the video',
+          color: accent,
+          onTap: widget.enabled
+              ? () => launchUrl(Uri.parse(event.coverVideoUrl!), mode: LaunchMode.externalApplication)
+              : null,
+        ),
+    ];
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Wrap(spacing: 8, runSpacing: 8, children: chips),
+    );
+  }
+}
+
+class _VibeChip extends StatelessWidget {
+  const _VibeChip({required this.icon, required this.label, required this.color, this.onTap});
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    return Material(
+      color: color.withValues(alpha: .14),
+      shape: StadiumBorder(side: BorderSide(color: color.withValues(alpha: .6))),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(label, style: TextStyle(color: tokens.text, fontWeight: FontWeight.w600)),
+              if (onTap != null) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.open_in_new, size: 13, color: tokens.muted),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---- Polls -------------------------------------------------------------------
+
+/// "What music?" polls: guests going vote, everyone sees results, the host adds.
+class PollsSection extends ConsumerWidget {
+  const PollsSection({super.key, required this.event});
+
+  final JolEvent event;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final result = ref.watch(eventPollsProvider(event.id));
+    final data = result.value;
+    if (data == null || (data.polls.isEmpty && !data.canManage)) {
+      return const SizedBox.shrink();
+    }
+    final accent = eventAccent(context, event);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: JolCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AttendeeSectionTitle(
+              'polls',
+              trailing: data.canManage && data.polls.length < 5
+                  ? TextButton(
+                      onPressed: () => _addPoll(context, ref),
+                      child: const Text('Add poll'),
+                    )
+                  : null,
+            ),
+            if (data.polls.isEmpty)
+              Text(
+                'Ask guests something before the night, like “What music?”.',
+                style: TextStyle(color: JolTokens.of(context).muted),
+              ),
+            for (final poll in data.polls)
+              _PollCard(event: event, poll: poll, canVote: data.canVote, canManage: data.canManage, accent: accent),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addPoll(BuildContext context, WidgetRef ref) async {
+    final question = TextEditingController();
+    final answers = List.generate(4, (_) => TextEditingController());
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New poll'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: question,
+                maxLength: 140,
+                decoration: const InputDecoration(labelText: 'Question', hintText: 'What music?'),
+              ),
+              for (var index = 0; index < answers.length; index++)
+                TextField(
+                  controller: answers[index],
+                  maxLength: 60,
+                  decoration: InputDecoration(
+                    labelText: 'Answer ${index + 1}${index >= 2 ? ' (optional)' : ''}',
+                    counterText: '',
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Add')),
+        ],
+      ),
+    );
+    final options = answers.map((answer) => answer.text.trim()).where((text) => text.isNotEmpty).toList();
+    final text = question.text.trim();
+    question.dispose();
+    for (final answer in answers) {
+      answer.dispose();
+    }
+    if (saved != true) return;
+    if (text.isEmpty || options.length < 2) {
+      if (context.mounted) JolToast.show(context, 'Add a question and at least two answers.');
+      return;
+    }
+    try {
+      await ref.read(socialRepositoryProvider).createPoll(event.id, text, options);
+      ref.invalidate(eventPollsProvider(event.id));
+    } on ApiException catch (error) {
+      if (context.mounted) JolToast.show(context, error.message);
+    }
+  }
+}
+
+class _PollCard extends ConsumerWidget {
+  const _PollCard({
+    required this.event,
+    required this.poll,
+    required this.canVote,
+    required this.canManage,
+    required this.accent,
+  });
+
+  final JolEvent event;
+  final EventPoll poll;
+  final bool canVote;
+  final bool canManage;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tokens = JolTokens.of(context);
+    final showResults = poll.myVote != null || !poll.isOpen || !canVote;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(poll.question, style: Theme.of(context).textTheme.titleMedium)),
+              if (canManage)
+                IconButton(
+                  tooltip: 'Remove poll',
+                  icon: Icon(Icons.delete_outline, size: 18, color: tokens.muted),
+                  onPressed: () async {
+                    try {
+                      await ref.read(socialRepositoryProvider).deletePoll(event.id, poll.id);
+                      ref.invalidate(eventPollsProvider(event.id));
+                    } on ApiException catch (error) {
+                      if (context.mounted) JolToast.show(context, error.message);
+                    }
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (var index = 0; index < poll.options.length; index++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: canVote && poll.isOpen
+                    ? () async {
+                        HapticFeedback.selectionClick();
+                        try {
+                          await ref.read(socialRepositoryProvider).vote(event.id, poll.id, index);
+                          ref.invalidate(eventPollsProvider(event.id));
+                        } on ApiException catch (error) {
+                          if (context.mounted) JolToast.show(context, error.message);
+                        }
+                      }
+                    : null,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: poll.myVote == index ? accent : tokens.line),
+                  ),
+                  child: Stack(
+                    children: [
+                      if (showResults)
+                        Positioned.fill(
+                          child: FractionallySizedBox(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: poll.options[index].percent / 100,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: accent.withValues(alpha: .18),
+                                borderRadius: BorderRadius.circular(11),
+                              ),
+                            ),
+                          ),
+                        ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                        child: Row(
+                          children: [
+                            if (poll.myVote == index) ...[
+                              Icon(Icons.check_circle, size: 16, color: accent),
+                              const SizedBox(width: 6),
+                            ],
+                            Expanded(child: Text(poll.options[index].label)),
+                            if (showResults) Text('${poll.options[index].percent}%'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          Text(
+            [
+              '${poll.totalVotes} ${poll.totalVotes == 1 ? 'vote' : 'votes'}',
+              if (!poll.isOpen) 'closed',
+              if (poll.isOpen && !canVote) 'RSVP or get a ticket to vote',
+            ].join(' · '),
+            style: TextStyle(color: tokens.muted, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---- Trust -------------------------------------------------------------------
+
+/// "Your money is protected until the party."
+class MoneyProtectedBadge extends StatelessWidget {
+  const MoneyProtectedBadge({super.key, this.compact = false});
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    const green = Color(0xFF2E9E6A);
+    return Container(
+      padding: EdgeInsets.all(compact ? 12 : 16),
+      decoration: BoxDecoration(
+        color: green.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: green.withValues(alpha: .45)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.verified_user, color: green),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Your money is protected until the party',
+                  style: TextStyle(color: tokens.text, fontWeight: FontWeight.w700),
+                ),
+                if (!compact) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'JOL holds ticket money and only pays the host after the event. '
+                    'If it’s cancelled, you get a full refund.',
+                    style: TextStyle(color: tokens.muted, fontSize: 13),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---- Shared album ------------------------------------------------------------
+
+/// A strip of album photos on the event page, once doors have opened.
+class EventAlbumSection extends ConsumerWidget {
+  const EventAlbumSection({super.key, required this.event});
+
+  final JolEvent event;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tokens = JolTokens.of(context);
+    final start = event.startsAt ?? event.date;
+    if (start.subtract(const Duration(hours: 1)).isAfter(DateTime.now())) {
+      return const SizedBox.shrink();
+    }
+    final album = ref.watch(eventAlbumProvider(event.id)).value;
+    if (album == null || (!album.canSee && album.count == 0)) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: JolCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AttendeeSectionTitle(
+              'the album · ${album.count}',
+              trailing: album.canSee
+                  ? TextButton(
+                      onPressed: () => context.push('/event/${event.id}/album'),
+                      child: const Text('Open'),
+                    )
+                  : null,
+            ),
+            if (!album.canSee)
+              Text('Photos from the night, for people who went.', style: TextStyle(color: tokens.muted))
+            else if (album.photos.isEmpty)
+              Text(
+                album.canAdd ? 'Add the first photo from the night.' : 'No photos yet.',
+                style: TextStyle(color: tokens.muted),
+              )
+            else
+              SizedBox(
+                height: 92,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: album.photos.length > 12 ? 12 : album.photos.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) => GestureDetector(
+                    onTap: () => context.push('/event/${event.id}/album'),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(album.photos[index].thumbUrl, width: 92, height: 92, fit: BoxFit.cover),
+                    ),
+                  ),
+                ),
+              ),
+            if (album.canAdd) ...[
+              const SizedBox(height: 10),
+              JolButton(
+                label: 'Add photos',
+                small: true,
+                variant: JolButtonVariant.ghost,
+                onPressed: () => context.push('/event/${event.id}/album'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class EventAlbumScreen extends ConsumerStatefulWidget {
+  const EventAlbumScreen({super.key, required this.eventId});
+
+  final String eventId;
+
+  @override
+  ConsumerState<EventAlbumScreen> createState() => _EventAlbumScreenState();
+}
+
+class _EventAlbumScreenState extends ConsumerState<EventAlbumScreen> {
+  var _uploading = 0;
+
+  Future<void> _add() async {
+    final picked = await ImagePicker().pickMultiImage(maxWidth: 1600, maxHeight: 1600, imageQuality: 82, limit: 10);
+    if (picked.isEmpty || !mounted) return;
+    setState(() => _uploading = picked.length);
+    final repository = ref.read(socialRepositoryProvider);
+    var added = 0;
+    for (final file in picked) {
+      try {
+        await repository.addPhoto(widget.eventId, file.path);
+        added++;
+      } on ApiException catch (error) {
+        if (mounted) JolToast.show(context, error.message);
+        break;
+      } finally {
+        if (mounted) setState(() => _uploading--);
+      }
+    }
+    if (!mounted) return;
+    setState(() => _uploading = 0);
+    ref.invalidate(eventAlbumProvider(widget.eventId));
+    if (added > 0) {
+      HapticFeedback.mediumImpact();
+      JolToast.show(context, added == 1 ? 'Photo added.' : '$added photos added.');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    final result = ref.watch(eventAlbumProvider(widget.eventId));
+    final event = ref.watch(attendeeEventProvider(widget.eventId)).value;
+    final album = result.value;
+    return Scaffold(
+      appBar: AppBar(title: Text(event == null ? 'the album' : '${event.title} · album')),
+      floatingActionButton: album?.canAdd == true
+          ? FloatingActionButton.extended(
+              onPressed: _uploading > 0 ? null : _add,
+              icon: _uploading > 0
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.add_a_photo_outlined),
+              label: Text(_uploading > 0 ? 'Uploading $_uploading…' : 'Add photos'),
+            )
+          : null,
+      body: result.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, _) => AttendeeEmptyState(
+          title: 'Couldn’t load the album',
+          message: '$error',
+          actionLabel: 'Try again',
+          onAction: () => ref.invalidate(eventAlbumProvider(widget.eventId)),
+        ),
+        data: (album) => !album.canSee
+            ? const AttendeeEmptyState(title: 'For people who went', message: 'Only guests and the host can see this album.')
+            : album.photos.isEmpty
+            ? AttendeeEmptyState(
+                title: 'No photos yet',
+                message: album.canAdd ? 'Add your photos from the night.' : (album.addProblem ?? ''),
+              )
+            : RefreshIndicator(
+                onRefresh: () async => ref.invalidate(eventAlbumProvider(widget.eventId)),
+                child: GridView.builder(
+                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 96),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, mainAxisSpacing: 4, crossAxisSpacing: 4),
+                  itemCount: album.photos.length,
+                  itemBuilder: (context, index) {
+                    final photo = album.photos[index];
+                    return GestureDetector(
+                      onTap: () => _open(context, album.photos, index),
+                      child: Image.network(
+                        photo.thumbUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) => ColoredBox(color: tokens.surface2),
+                      ),
+                    );
+                  },
+                ),
+              ),
+      ),
+    );
+  }
+
+  void _open(BuildContext context, List<AlbumPhoto> photos, int start) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _PhotoViewer(eventId: widget.eventId, photos: photos, start: start),
+      ),
+    );
+  }
+}
+
+class _PhotoViewer extends ConsumerStatefulWidget {
+  const _PhotoViewer({required this.eventId, required this.photos, required this.start});
+
+  final String eventId;
+  final List<AlbumPhoto> photos;
+  final int start;
+
+  @override
+  ConsumerState<_PhotoViewer> createState() => _PhotoViewerState();
+}
+
+class _PhotoViewerState extends ConsumerState<_PhotoViewer> {
+  late final _pages = PageController(initialPage: widget.start);
+  late var _index = widget.start;
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = widget.photos[_index];
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text(photo.author.name),
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (action) async {
+              final repository = ref.read(socialRepositoryProvider);
+              try {
+                if (action == 'remove') {
+                  await repository.removePhoto(widget.eventId, photo.id);
+                  ref.invalidate(eventAlbumProvider(widget.eventId));
+                  if (context.mounted) Navigator.of(context).pop();
+                } else {
+                  await repository.reportPhoto(widget.eventId, photo.id);
+                  if (context.mounted) JolToast.show(context, 'Reported. The JOL team will look at it.');
+                }
+              } on ApiException catch (error) {
+                if (context.mounted) JolToast.show(context, error.message);
+              }
+            },
+            itemBuilder: (context) => [
+              if (photo.canRemove) const PopupMenuItem(value: 'remove', child: Text('Remove')),
+              if (!photo.mine) const PopupMenuItem(value: 'report', child: Text('Report')),
+            ],
+          ),
+        ],
+      ),
+      body: PageView.builder(
+        controller: _pages,
+        itemCount: widget.photos.length,
+        onPageChanged: (index) => setState(() => _index = index),
+        itemBuilder: (context, index) => InteractiveViewer(
+          child: Center(child: Image.network(widget.photos[index].url, fit: BoxFit.contain)),
+        ),
+      ),
+      bottomNavigationBar: photo.caption == null
+          ? null
+          : SafeArea(
+              minimum: const EdgeInsets.all(16),
+              child: Text(photo.caption!, style: const TextStyle(color: Colors.white)),
+            ),
+    );
+  }
+}
+
+// ---- Memories ----------------------------------------------------------------
+
+/// Your past nights, with points, streak and badges on top.
+class MemoriesScreen extends ConsumerWidget {
+  const MemoriesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tokens = JolTokens.of(context);
+    final memories = ref.watch(memoriesProvider);
+    final achievements = ref.watch(achievementsProvider).value;
+    return Scaffold(
+      appBar: AppBar(title: const Text('memories')),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(memoriesProvider);
+          ref.invalidate(achievementsProvider);
+        },
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+          children: [
+            if (achievements != null) ...[
+              Row(
+                children: [
+                  _Stat(value: '${achievements.points}', label: 'points'),
+                  _Stat(value: '${achievements.eventsAttended}', label: 'nights out'),
+                  _Stat(
+                    value: '${achievements.streakMonths}',
+                    label: achievements.streakMonths == 1 ? 'month streak' : 'months streak',
+                    icon: achievements.streakMonths >= 2 ? Icons.local_fire_department : null,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final badge in achievements.badges)
+                    Tooltip(
+                      message: badge.hint,
+                      child: Chip(
+                        avatar: Icon(
+                          badge.earned ? Icons.emoji_events : Icons.lock_outline,
+                          size: 16,
+                          color: badge.earned ? tokens.accent : tokens.muted,
+                        ),
+                        label: Text(badge.label),
+                        backgroundColor: badge.earned ? tokens.accent.withValues(alpha: .14) : tokens.surface2,
+                        labelStyle: TextStyle(color: badge.earned ? tokens.text : tokens.muted),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 18),
+            ],
+            AttendeeSectionTitle('your nights'),
+            ...memories.when(
+              loading: () => [const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator()))],
+              error: (error, _) => [Text('$error', style: TextStyle(color: tokens.muted))],
+              data: (items) => items.isEmpty
+                  ? [
+                      Text(
+                        'Events you go to show up here, with the photos from each night.',
+                        style: TextStyle(color: tokens.muted),
+                      ),
+                    ]
+                  : [
+                      for (final memory in items)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: JolCard(
+                            padding: const EdgeInsets.all(10),
+                            child: InkWell(
+                              onTap: () => context.push(
+                                memory.photoCount > 0 ? '/event/${memory.eventId}/album' : '/event/${memory.eventId}',
+                              ),
+                              child: Row(
+                                children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: memory.imageUrl == null
+                                        ? Container(width: 72, height: 72, color: tokens.surface2, child: Icon(Icons.nightlife, color: tokens.muted))
+                                        : Image.network(memory.imageUrl!, width: 72, height: 72, fit: BoxFit.cover),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(memory.title, style: Theme.of(context).textTheme.titleMedium),
+                                        Text(
+                                          [
+                                            if (memory.start != null) formatEventDate(memory.start!),
+                                            ?memory.place,
+                                          ].join(' · '),
+                                          style: TextStyle(color: tokens.muted),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          [
+                                            if (memory.photoCount > 0) '${memory.photoCount} ${memory.photoCount == 1 ? 'photo' : 'photos'}',
+                                            if (memory.myRating != null) '★' * memory.myRating!,
+                                          ].join(' · '),
+                                          style: TextStyle(color: tokens.text, fontSize: 12),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  const _Stat({required this.value, required this.label, this.icon});
+
+  final String value;
+  final String label;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    return Expanded(
+      child: JolCard(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (icon != null) Icon(icon, color: tokens.accent, size: 20),
+                Text(value, style: Theme.of(context).textTheme.headlineSmall),
+              ],
+            ),
+            Text(label, style: TextStyle(color: tokens.muted, fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---- Confetti ----------------------------------------------------------------
+
+/// A one-off burst of confetti over [child] (e.g. when a ticket is booked).
+class Confetti extends StatefulWidget {
+  const Confetti({super.key, required this.child, this.play = true});
+
+  final Widget child;
+  final bool play;
+
+  @override
+  State<Confetti> createState() => _ConfettiState();
+}
+
+class _ConfettiState extends State<Confetti> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 2600));
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.play) {
+      _controller.forward();
+      HapticFeedback.heavyImpact();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        widget.child,
+        if (widget.play)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) => _controller.isCompleted
+                    ? const SizedBox.shrink()
+                    : CustomPaint(painter: _ConfettiPainter(_controller.value)),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ConfettiPainter extends CustomPainter {
+  _ConfettiPainter(this.t);
+
+  final double t;
+
+  static const _colors = [Color(0xFFE8792E), Color(0xFFF2C94C), Color(0xFF7C5CE0), Color(0xFF2E9E6A), Color(0xFFE04F5F), Color(0xFF2F80ED)];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint();
+    for (var index = 0; index < 90; index++) {
+      // Fixed pseudo-random spread per piece, so each frame is consistent.
+      final seed = (index * 9301 + 49297) % 233280 / 233280;
+      final seed2 = (index * 4567 + 1234) % 9973 / 9973;
+      final x = size.width * (.5 + (seed - .5) * (0.4 + 1.4 * t));
+      final y = size.height * (.12 - .3 * seed2 * (1 - t) + 1.1 * t * t + .15 * seed * t);
+      final angle = t * 12 * (seed2 + .2) + index;
+      paint.color = _colors[index % _colors.length].withValues(alpha: (1 - t).clamp(0, 1).toDouble());
+      canvas
+        ..save()
+        ..translate(x, y)
+        ..rotate(angle)
+        ..drawRect(const Rect.fromLTWH(-4, -2.5, 8, 5), paint)
+        ..restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ConfettiPainter old) => old.t != t;
+}
+
+// ---- Wallet passes -----------------------------------------------------------
+
+/// "Add to Apple Wallet" on iPhone, "Save to Google Wallet" on Android, when JOL
+/// has them set up. The pass shows the same QR code as the app.
+class WalletButtons extends ConsumerWidget {
+  const WalletButtons({super.key, required this.ticketId});
+
+  final String ticketId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final links = ref.watch(walletLinksProvider(ticketId)).value;
+    final url = links == null ? null : (Platform.isIOS ? links.apple : links.google);
+    if (url == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+            minimumSize: const Size.fromHeight(50),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+          icon: const Icon(Icons.account_balance_wallet_outlined),
+          label: Text(Platform.isIOS ? 'Add to Apple Wallet' : 'Save to Google Wallet'),
+          onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+        ),
       ),
     );
   }

@@ -102,7 +102,24 @@ class EventDraft {
     this.studentDiscountPercent,
     this.promoterCommissionType,
     this.promoterCommissionValue,
+    this.dressCode = '',
+    this.playlistUrl = '',
+    this.themeColor,
+    this.showCountdown = true,
+    this.coverVideoPath,
+    this.removeCoverVideo = false,
   });
+
+  final String dressCode;
+  final String playlistUrl;
+
+  /// "#RRGGBB", or null for the JOL default.
+  final String? themeColor;
+  final bool showCountdown;
+
+  /// Local video to upload (null = keep the current one).
+  final String? coverVideoPath;
+  final bool removeCoverVideo;
 
   final String title;
   final String category;
@@ -160,6 +177,11 @@ class EventDraft {
     'guestlist_cutoff_at': guestlistCutoffAt?.toUtc().toIso8601String(),
     'student_discount_percent': studentDiscountPercent,
     'promoter_commission_type': promoterCommissionType,
+    'dress_code': dressCode.isEmpty ? null : dressCode,
+    'playlist_url': playlistUrl.isEmpty ? null : playlistUrl,
+    'theme_color': themeColor,
+    'show_countdown': showCountdown ? 1 : 0,
+    if (removeCoverVideo) 'remove_cover_video': 1,
     if (promoterCommissionType == 'fixed')
       'promoter_commission_amount': promoterCommissionValue
     else if (promoterCommissionType == 'percentage')
@@ -196,7 +218,10 @@ class HostingRepository {
     bool removeFund = false,
   }) => _call(() async {
     final fields = <String, Object?>{...draft.toJson(), 'status': status};
-    final path = draft.coverImagePath;
+    final cover = draft.coverImagePath;
+    final video = draft.coverVideoPath;
+    // Multipart whenever a file goes up.
+    final path = cover ?? video;
     final Object body;
     if (path == null) {
       body = fields;
@@ -205,7 +230,8 @@ class HostingRepository {
       // so send '' to clear a field.
       final multipart = <String, Object>{
         for (final entry in fields.entries) entry.key: entry.value ?? '',
-        'cover_image': await MultipartFile.fromFile(path),
+        if (cover != null) 'cover_image': await MultipartFile.fromFile(cover),
+        if (video != null) 'cover_video': await MultipartFile.fromFile(video),
         // PHP only parses multipart bodies on POST, so updates use
         // method spoofing.
         if (eventId != null) '_method': 'PUT',
@@ -214,7 +240,7 @@ class HostingRepository {
     }
     final options = path == null
         ? null
-        : Options(sendTimeout: const Duration(seconds: 90));
+        : Options(sendTimeout: Duration(seconds: video == null ? 90 : 240));
     final Response<Map<String, dynamic>> response;
     if (eventId == null) {
       response = await _dio.post('/events', data: body, options: options);

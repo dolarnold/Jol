@@ -55,6 +55,15 @@ GoRouter _createRouter() {
         builder: (context, state) =>
             EventWallScreen(eventId: state.pathParameters['eventId']!),
       ),
+      GoRoute(
+        path: '/event/:eventId/album',
+        builder: (context, state) =>
+            EventAlbumScreen(eventId: state.pathParameters['eventId']!),
+      ),
+      GoRoute(
+        path: '/memories',
+        builder: (context, state) => const MemoriesScreen(),
+      ),
       // Friends: your code, follow back, and who's going where.
       GoRoute(
         path: '/friends',

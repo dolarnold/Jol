@@ -9,6 +9,21 @@ What changed in the JOL app, newest first. The version is `version:` in
 
 ## [Unreleased]
 
+### Added (wallet)
+- "Add to Apple Wallet" (iPhone) and "Save to Google Wallet" (Android) on the ticket screen, once JOL sets them up in Admin → Integrations. The pass has the same QR code as the app.
+
+### Added (trust, hosts, memories)
+- Event pages show "✓ Verified host" (ID checked) and earned host badges (Top rated, Seasoned host, Crowd puller), and a "Your money is protected until the party" note on ticketed events and at checkout.
+- Hosts: Profile → Analytics shows views, bookings, conversion, sales, fees, what you get and check-ins, per event or for all events, with daily charts.
+- The album: guests who went (and the host) add photos from when doors open until 7 days after. Only they can see it.
+- Memories: Profile → Memories lists the nights you went to, with album photos, points, your monthly streak and badges.
+- Confetti and a buzz when a ticket is booked; a buzz when an RSVP is confirmed.
+
+### Added (event pages)
+- Hosts can add a cover video (up to a minute), a theme colour, a dress code, a playlist link and a countdown. Guests see them under the event title.
+- Polls: hosts ask "What music?" or "What should we bring?"; guests going vote (and can change their vote); everyone sees the results.
+- Reminders say more: "2 days to go", how many people are going and which friends, plus the dress code.
+
 ### Added (social)
 - Friends: follow people; when you follow each other you're friends. Event cards and pages show which friends are going, with their photos. Profile → Friends has your friend code, people to follow back, and a switch to hide what you're going to.
 - The wall: every event page has a wall where guests going (and the host) post before the night. Hosts can remove posts; anyone can report one.

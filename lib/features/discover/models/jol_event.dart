@@ -155,7 +155,38 @@ class JolEvent {
     this.viewerCanReview = false,
     this.friendsGoingCount = 0,
     this.friendsGoing = const <JolFriendFace>[],
+    this.coverVideoUrl,
+    this.themeColor,
+    this.dressCode,
+    this.playlistUrl,
+    this.playlistService,
+    this.showCountdown = true,
+    this.hostBadges = const <String>[],
+    this.moneyProtected = false,
   });
+
+  /// "Top rated", "Seasoned host", "Crowd puller".
+  final List<String> hostBadges;
+
+  /// Ticket money is held by JOL until after the event.
+  final bool moneyProtected;
+
+  /// Short clip the host uploaded (plays over the poster).
+  final String? coverVideoUrl;
+
+  /// The host's accent colour as 0xAARRGGBB, or null for the JOL default.
+  final int? themeColor;
+  final String? dressCode;
+  final String? playlistUrl;
+
+  /// "Spotify", "Apple Music", "YouTube", "SoundCloud" or "Playlist".
+  final String? playlistService;
+  final bool showCountdown;
+
+  /// "#RRGGBB" for forms.
+  String? get themeHex => themeColor == null
+      ? null
+      : '#${(themeColor! & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
 
   /// Friends (people who follow each other with the viewer) going.
   final int friendsGoingCount;
@@ -382,7 +413,7 @@ class JolEvent {
           : tiers.map((tier) => tier.price).reduce((a, b) => a < b ? a : b),
       isPrivate: isPrivate,
       isSoldOut: tiers.isNotEmpty && tiers.every((tier) => tier.isSoldOut),
-      isVerifiedHost: false,
+      isVerifiedHost: json['host_verified'] == true,
       isAgeRestricted: json['is_age_restricted'] == true,
       canTransfer: json['allow_ticket_transfer'] == true,
       allowsPlusOne: json['allow_plus_ones'] != false,
@@ -443,6 +474,19 @@ class JolEvent {
       friendsGoing: json['friends_going'] is Map
           ? JolFriendFace.listFrom((json['friends_going'] as Map)['faces'])
           : const <JolFriendFace>[],
+      coverVideoUrl: _text(json['cover_video_url']),
+      themeColor: _hexColor(json['theme_color']),
+      dressCode: _text(json['dress_code']),
+      playlistUrl: _text(json['playlist_url']),
+      playlistService: _text(json['playlist_service']),
+      showCountdown: json['show_countdown'] != false,
+      hostBadges: json['host_badges'] is List
+          ? (json['host_badges'] as List)
+                .whereType<Map>()
+                .map((badge) => '${badge['label']}')
+                .toList(growable: false)
+          : const <String>[],
+      moneyProtected: json['money_protected'] == true,
     );
   }
 
@@ -455,6 +499,16 @@ class JolEvent {
     if (fromPrice == 0) return 'Free tickets';
     return 'From ${formatZar(fromPrice)}';
   }
+}
+
+String? _text(Object? value) =>
+    value is String && value.trim().isNotEmpty ? value.trim() : null;
+
+int? _hexColor(Object? value) {
+  if (value is! String || !RegExp(r'^#[0-9A-Fa-f]{6}$').hasMatch(value)) {
+    return null;
+  }
+  return 0xFF000000 | int.parse(value.substring(1), radix: 16);
 }
 
 int _apiPrice(Object? value) {

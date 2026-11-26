@@ -451,6 +451,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
               ],
             ),
           ),
+          const SizedBox(height: 12),
+          const MoneyProtectedBadge(compact: true),
           const SizedBox(height: 20),
           AttendeeSectionTitle('payment method'),
           JolCard(
@@ -675,7 +677,10 @@ class PaymentResultScreen extends ConsumerWidget {
       ),
     };
     return Scaffold(
-      body: SafeArea(
+      // A confetti moment (and a buzz) when the ticket is booked.
+      body: Confetti(
+        play: state.paymentOutcome == MockPaymentOutcome.success,
+        child: SafeArea(
         child: Center(
           child: ListView(
             shrinkWrap: true,
@@ -748,6 +753,7 @@ class PaymentResultScreen extends ConsumerWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -1099,6 +1105,7 @@ class _TicketQrScreenState extends ConsumerState<TicketQrScreen> {
                       ],
                     ),
             ),
+            if (ticket != null && ticket.isValid) WalletButtons(ticketId: ticket.id),
             if (ticket != null &&
                 event.canTransfer &&
                 ticket.isValid) ...[

@@ -15,6 +15,7 @@ import '../../discover/models/jol_event.dart';
 import '../../hosting/data/hosting_repository.dart';
 import '../../inbox/inbox_screens.dart';
 import '../../hosting/screens/event_form_screen.dart';
+import '../../hosting/screens/host_analytics_screen.dart';
 import '../../hosting/screens/host_mode.dart';
 import '../growth_screens.dart';
 import '../../../ui/theme/jol_theme.dart';
@@ -139,6 +140,13 @@ class AttendeeMeScreen extends ConsumerWidget {
           JolCard(
             child: Column(
               children: [
+                JolListRow(
+                  title: 'Memories',
+                  subtitle: 'Your nights out, photos, badges and streak',
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/memories'),
+                ),
+                const Divider(height: 12),
                 JolListRow(
                   title: 'Friends',
                   subtitle: 'See which events your friends are going to',
@@ -381,6 +389,17 @@ class HostDashboardScreen extends ConsumerWidget {
                     onTap: () => Navigator.of(context, rootNavigator: true).push(
                       MaterialPageRoute<void>(
                         builder: (_) => const EventFormScreen(),
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 12),
+                  JolListRow(
+                    title: 'Analytics',
+                    subtitle: 'Views, bookings, sales and check-ins',
+                    trailing: const Icon(Icons.insights_outlined),
+                    onTap: () => Navigator.of(context, rootNavigator: true).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const HostAnalyticsScreen(),
                       ),
                     ),
                   ),

@@ -23,6 +23,26 @@ final splitProvider = FutureProvider.autoDispose.family<SplitBooking, String>(
   (ref, code) => ref.watch(socialRepositoryProvider).split(code),
 );
 
+final eventPollsProvider = FutureProvider.autoDispose.family<EventPolls, String>(
+  (ref, eventId) => ref.watch(socialRepositoryProvider).polls(eventId),
+);
+
+final eventAlbumProvider = FutureProvider.autoDispose.family<EventAlbum, String>(
+  (ref, eventId) => ref.watch(socialRepositoryProvider).album(eventId),
+);
+
+final memoriesProvider = FutureProvider.autoDispose<List<Memory>>(
+  (ref) => ref.watch(socialRepositoryProvider).memories(),
+);
+
+final achievementsProvider = FutureProvider.autoDispose<Achievements>(
+  (ref) => ref.watch(socialRepositoryProvider).achievements(),
+);
+
+final walletLinksProvider = FutureProvider.autoDispose.family<({String? apple, String? google}), String>(
+  (ref, ticketId) => ref.watch(socialRepositoryProvider).walletLinks(ticketId),
+);
+
 final mySplitsProvider = FutureProvider.autoDispose<List<SplitBooking>>(
   (ref) => ref.watch(socialRepositoryProvider).mySplits(),
 );
@@ -246,6 +266,148 @@ class SplitBooking {
   SplitShare? get myShare => shares.where((share) => share.mine).firstOrNull;
 }
 
+@immutable
+class PollOption {
+  const PollOption({required this.label, required this.votes, required this.percent});
+
+  final String label;
+  final int votes;
+  final int percent;
+}
+
+@immutable
+class EventPoll {
+  const EventPoll({
+    required this.id,
+    required this.question,
+    required this.isOpen,
+    required this.totalVotes,
+    required this.myVote,
+    required this.options,
+  });
+
+  factory EventPoll.fromJson(Map<String, dynamic> json) => EventPoll(
+    id: '${json['id']}',
+    question: json['question'] as String? ?? '',
+    isOpen: json['is_open'] == true,
+    totalVotes: (json['total_votes'] as num?)?.toInt() ?? 0,
+    myVote: (json['my_vote'] as num?)?.toInt(),
+    options: (json['options'] is List ? json['options'] as List : const [])
+        .whereType<Map>()
+        .map(
+          (option) => PollOption(
+            label: option['label'] as String? ?? '',
+            votes: (option['votes'] as num?)?.toInt() ?? 0,
+            percent: (option['percent'] as num?)?.toInt() ?? 0,
+          ),
+        )
+        .toList(growable: false),
+  );
+
+  final String id;
+  final String question;
+  final bool isOpen;
+  final int totalVotes;
+  final int? myVote;
+  final List<PollOption> options;
+}
+
+@immutable
+class EventPolls {
+  const EventPolls({required this.canVote, required this.canManage, required this.polls});
+
+  final bool canVote;
+  final bool canManage;
+  final List<EventPoll> polls;
+}
+
+@immutable
+class AlbumPhoto {
+  const AlbumPhoto({
+    required this.id,
+    required this.url,
+    required this.thumbUrl,
+    required this.caption,
+    required this.author,
+    required this.mine,
+    required this.canRemove,
+  });
+
+  final String id;
+  final String url;
+  final String thumbUrl;
+  final String? caption;
+  final JolFriendFace author;
+  final bool mine;
+  final bool canRemove;
+}
+
+@immutable
+class EventAlbum {
+  const EventAlbum({
+    required this.canSee,
+    required this.canAdd,
+    required this.addProblem,
+    required this.count,
+    required this.photos,
+  });
+
+  final bool canSee;
+  final bool canAdd;
+  final String? addProblem;
+  final int count;
+  final List<AlbumPhoto> photos;
+}
+
+@immutable
+class Memory {
+  const Memory({
+    required this.eventId,
+    required this.title,
+    required this.start,
+    required this.place,
+    required this.imageUrl,
+    required this.photoCount,
+    required this.myRating,
+  });
+
+  final String eventId;
+  final String title;
+  final DateTime? start;
+  final String? place;
+
+  /// An album photo from the night, else the event cover.
+  final String? imageUrl;
+  final int photoCount;
+  final int? myRating;
+}
+
+@immutable
+class JolBadge {
+  const JolBadge({required this.label, required this.hint, required this.earned});
+
+  final String label;
+  final String hint;
+  final bool earned;
+}
+
+@immutable
+class Achievements {
+  const Achievements({
+    required this.points,
+    required this.eventsAttended,
+    required this.eventsHosted,
+    required this.streakMonths,
+    required this.badges,
+  });
+
+  final int points;
+  final int eventsAttended;
+  final int eventsHosted;
+  final int streakMonths;
+  final List<JolBadge> badges;
+}
+
 String? _url(Object? value) => value is String && value.isNotEmpty ? value : null;
 
 class SocialRepository {
@@ -359,6 +521,151 @@ class SocialRepository {
   Future<void> reportPost(String eventId, String postId) => _call(() async {
     await _dio.post<Map<String, dynamic>>(
       '/events/${Uri.encodeComponent(eventId)}/wall/$postId/report',
+    );
+  });
+
+  // ---- Album, memories and badges -----------------------------------------
+
+  Future<EventAlbum> album(String eventId) => _call(() async {
+    final data = _data(
+      await _dio.get<Map<String, dynamic>>('/events/${Uri.encodeComponent(eventId)}/photos'),
+    );
+    return EventAlbum(
+      canSee: data['can_see'] == true,
+      canAdd: data['can_add'] == true,
+      addProblem: data['add_problem'] as String?,
+      count: (data['count'] as num?)?.toInt() ?? 0,
+      photos: (data['photos'] is List ? data['photos'] as List : const [])
+          .whereType<Map>()
+          .map((raw) {
+            final photo = Map<String, dynamic>.from(raw);
+            final author = photo['author'] is Map ? photo['author'] as Map : const {};
+            return AlbumPhoto(
+              id: '${photo['id']}',
+              url: photo['url'] as String? ?? '',
+              thumbUrl: photo['thumb_url'] as String? ?? photo['url'] as String? ?? '',
+              caption: photo['caption'] as String?,
+              author: JolFriendFace(
+                id: '${author['id']}',
+                name: author['name'] as String? ?? 'Guest',
+                avatarUrl: _url(author['avatar_url']),
+              ),
+              mine: photo['mine'] == true,
+              canRemove: photo['can_remove'] == true,
+            );
+          })
+          .toList(growable: false),
+    );
+  });
+
+  Future<void> addPhoto(String eventId, String path, {String? caption}) =>
+      _call(() async {
+        await _dio.post<Map<String, dynamic>>(
+          '/events/${Uri.encodeComponent(eventId)}/photos',
+          data: FormData.fromMap({
+            'photo': await MultipartFile.fromFile(path),
+            'caption': ?caption,
+          }),
+          options: Options(sendTimeout: const Duration(seconds: 90)),
+        );
+      });
+
+  Future<void> removePhoto(String eventId, String photoId) => _call(() async {
+    await _dio.delete<Map<String, dynamic>>(
+      '/events/${Uri.encodeComponent(eventId)}/photos/$photoId',
+    );
+  });
+
+  Future<void> reportPhoto(String eventId, String photoId) => _call(() async {
+    await _dio.post<Map<String, dynamic>>(
+      '/events/${Uri.encodeComponent(eventId)}/photos/$photoId/report',
+    );
+  });
+
+  Future<List<Memory>> memories() => _call(() async {
+    final response = await _dio.get<Map<String, dynamic>>('/me/memories');
+    final data = response.data?['data'];
+    return (data is List ? data : const [])
+        .whereType<Map>()
+        .map(
+          (item) => Memory(
+            eventId: '${item['id']}',
+            title: item['title'] as String? ?? 'Event',
+            start: DateTime.tryParse(item['start_time'] as String? ?? '')?.toLocal(),
+            place: item['location_name'] as String?,
+            imageUrl: _url(item['album_thumb_url']) ?? _url(item['cover_image_url']),
+            photoCount: (item['photo_count'] as num?)?.toInt() ?? 0,
+            myRating: (item['my_rating'] as num?)?.toInt(),
+          ),
+        )
+        .toList(growable: false);
+  });
+
+  Future<Achievements> achievements() => _call(() async {
+    final data = _data(await _dio.get<Map<String, dynamic>>('/me/achievements'));
+    return Achievements(
+      points: (data['points'] as num?)?.toInt() ?? 0,
+      eventsAttended: (data['events_attended'] as num?)?.toInt() ?? 0,
+      eventsHosted: (data['events_hosted'] as num?)?.toInt() ?? 0,
+      streakMonths: (data['streak_months'] as num?)?.toInt() ?? 0,
+      badges: (data['badges'] is List ? data['badges'] as List : const [])
+          .whereType<Map>()
+          .map(
+            (badge) => JolBadge(
+              label: badge['label'] as String? ?? '',
+              hint: badge['hint'] as String? ?? '',
+              earned: badge['earned'] == true,
+            ),
+          )
+          .toList(growable: false),
+    );
+  });
+
+  // ---- Wallet passes -------------------------------------------------------
+
+  /// Links for Apple Wallet and Google Wallet; null when JOL hasn't set one up.
+  Future<({String? apple, String? google})> walletLinks(String ticketId) =>
+      _call(() async {
+        final data = _data(
+          await _dio.get<Map<String, dynamic>>('/tickets/$ticketId/wallet'),
+        );
+        return (apple: _url(data['apple_url']), google: _url(data['google_url']));
+      });
+
+  // ---- Polls -----------------------------------------------------------------
+
+  Future<EventPolls> polls(String eventId) => _call(() async {
+    final data = _data(
+      await _dio.get<Map<String, dynamic>>('/events/${Uri.encodeComponent(eventId)}/polls'),
+    );
+    return EventPolls(
+      canVote: data['can_vote'] == true,
+      canManage: data['can_manage'] == true,
+      polls: (data['polls'] is List ? data['polls'] as List : const [])
+          .whereType<Map>()
+          .map((poll) => EventPoll.fromJson(Map<String, dynamic>.from(poll)))
+          .toList(growable: false),
+    );
+  });
+
+  Future<void> vote(String eventId, String pollId, int option) => _call(() async {
+    await _dio.post<Map<String, dynamic>>(
+      '/events/${Uri.encodeComponent(eventId)}/polls/$pollId/vote',
+      data: {'option': option},
+    );
+  });
+
+  Future<void> createPoll(String eventId, String question, List<String> options) =>
+      _call(() async {
+        await _dio.post<Map<String, dynamic>>(
+          '/events/${Uri.encodeComponent(eventId)}/polls',
+          data: {'question': question, 'options': options},
+        );
+      });
+
+  Future<void> deletePoll(String eventId, String pollId) => _call(() async {
+    await _dio.delete<Map<String, dynamic>>(
+      '/events/${Uri.encodeComponent(eventId)}/polls/$pollId',
     );
   });
 

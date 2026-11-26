@@ -117,6 +117,8 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
   final _fundSuggested = TextEditingController();
   final _fundTarget = TextEditingController();
   final _categoryLabel = TextEditingController();
+  final _dressCode = TextEditingController();
+  final _playlist = TextEditingController();
   final List<_TierFields> _tiers = [];
 
   var _category = _categories.first;
@@ -127,6 +129,11 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
   double? _longitude;
   XFile? _cover;
   String? _existingCoverUrl;
+  XFile? _video;
+  String? _existingVideoUrl;
+  var _removeVideo = false;
+  String? _themeColor;
+  var _showCountdown = true;
   String? _posterStyle;
   var _isPrivate = false;
   var _isAgeRestricted = false;
@@ -183,6 +190,11 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
     _longitude = event.longitude;
     _description.text = event.description;
     _existingCoverUrl = event.coverImageUrl;
+    _existingVideoUrl = event.coverVideoUrl;
+    _themeColor = event.themeHex;
+    _showCountdown = event.showCountdown;
+    _dressCode.text = event.dressCode ?? '';
+    _playlist.text = event.playlistUrl ?? '';
     _posterStyle = event.posterStyleName;
     _isPrivate = event.isPrivate;
     _isAgeRestricted = event.isAgeRestricted;
@@ -231,6 +243,8 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
       _fundSuggested,
       _fundTarget,
       _categoryLabel,
+      _dressCode,
+      _playlist,
     ]) {
       controller.dispose();
     }
@@ -295,6 +309,10 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
     if (_title.text.trim().isEmpty) return 'Give your event a name.';
     if (_category == 'general' && _categoryLabel.text.trim().isEmpty) {
       return 'Say what kind of event it is.';
+    }
+    final playlist = _playlist.text.trim();
+    if (playlist.isNotEmpty && !playlist.startsWith('https://')) {
+      return 'The playlist link must start with https://';
     }
     if (_date == null) return 'Pick a date.';
     if (!_startAt.isAfter(DateTime.now())) {
@@ -424,6 +442,12 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
           ? _commissionType
           : null,
       promoterCommissionValue: _isPaid ? commission : null,
+      dressCode: _dressCode.text.trim(),
+      playlistUrl: _playlist.text.trim(),
+      themeColor: _themeColor,
+      showCountdown: _showCountdown,
+      coverVideoPath: _video?.path,
+      removeCoverVideo: _removeVideo && _video == null,
     );
   }
 
@@ -606,6 +630,33 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
       ),
     );
   }
+
+  /// Up to a minute; the server takes clips up to 30 MB.
+  Future<void> _pickVideo() async {
+    try {
+      final picked = await ImagePicker().pickVideo(
+        source: ImageSource.gallery,
+        maxDuration: const Duration(seconds: 60),
+      );
+      if (picked == null || !mounted) return;
+      if (await picked.length() > 30 * 1024 * 1024) {
+        if (mounted) JolToast.show(context, 'That video is over 30 MB. Pick a shorter clip.');
+        return;
+      }
+      setState(() {
+        _video = picked;
+        _removeVideo = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        JolToast.show(context, 'Could not open your videos. Check app permissions.');
+      }
+    }
+  }
+
+  static const _themeSwatches = <String>[
+    '#E8792E', '#E04F5F', '#7C5CE0', '#2F80ED', '#27AE60', '#F2C94C', '#111111',
+  ];
 
   Future<TimeOfDay?> _time(TimeOfDay initial) =>
       showTimePicker(context: context, initialTime: initial);
@@ -849,6 +900,95 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
             ),
             value: _isPrivate,
             onChanged: (value) => setState(() => _isPrivate = value),
+          ),
+
+          // ---- The vibe ------------------------------------------------
+          section('the vibe'),
+          JolCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: JolListRow(
+              title: _video != null
+                  ? 'Video added'
+                  : (_existingVideoUrl != null && !_removeVideo)
+                  ? 'Cover video'
+                  : 'Add a cover video',
+              subtitle: _video != null
+                  ? 'Uploads when you save'
+                  : 'Up to a minute; plays over the poster',
+              trailing: (_video != null || (_existingVideoUrl != null && !_removeVideo))
+                  ? IconButton(
+                      tooltip: 'Remove video',
+                      icon: const Icon(Icons.close),
+                      onPressed: () => setState(() {
+                        _video = null;
+                        _removeVideo = true;
+                      }),
+                    )
+                  : const Icon(Icons.videocam_outlined),
+              onTap: _saving ? null : _pickVideo,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _dressCode,
+            maxLength: 120,
+            decoration: const InputDecoration(
+              labelText: 'Dress code',
+              hintText: 'e.g. All white',
+              counterText: '',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _playlist,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              labelText: 'Playlist link',
+              hintText: 'Spotify, Apple Music, YouTube or SoundCloud',
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text('Theme colour', style: theme.textTheme.labelMedium),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final hex in [null, ..._themeSwatches])
+                Semantics(
+                  button: true,
+                  selected: _themeColor == hex,
+                  label: hex ?? 'JOL default',
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => setState(() => _themeColor = hex),
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: hex == null
+                            ? tokens.surface2
+                            : Color(0xFF000000 | int.parse(hex.substring(1), radix: 16)),
+                        border: Border.all(
+                          color: _themeColor == hex ? tokens.text : tokens.line,
+                          width: _themeColor == hex ? 3 : 1,
+                        ),
+                      ),
+                      child: hex == null
+                          ? Icon(Icons.auto_awesome, size: 16, color: tokens.muted)
+                          : null,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Countdown'),
+            subtitle: const Text('Show “starts in 2d 4h” on the event page'),
+            value: _showCountdown,
+            onChanged: (value) => setState(() => _showCountdown = value),
           ),
 
           // ---- Entry ----------------------------------------------------

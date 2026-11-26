@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:add_2_calendar/add_2_calendar.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -980,6 +981,7 @@ class EventDetailsView extends ConsumerWidget {
             style: Theme.of(context).textTheme.bodyLarge
                 ?.copyWith(color: tokens.muted),
           ),
+          EventVibe(event: event, enabled: !preview),
           const SizedBox(height: 14),
           JolCard(
             child: Column(
@@ -997,9 +999,10 @@ class EventDetailsView extends ConsumerWidget {
                 const Divider(height: 18),
                 JolListRow(
                   title: event.host,
-                  subtitle: event.isVerifiedHost
-                      ? 'Verified organiser · ${event.hostEventCount} events'
-                      : 'Organiser',
+                  subtitle: [
+                    event.isVerifiedHost ? '✓ Verified host' : 'Organiser',
+                    ...event.hostBadges,
+                  ].join(' · '),
                   trailing: TextButton(
                     onPressed: preview
                         ? null
@@ -1038,6 +1041,12 @@ class EventDetailsView extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 14),
+          if (!preview && event.isApiBacked) PollsSection(event: event),
+          if (!preview && event.isApiBacked) EventAlbumSection(event: event),
+          if (event.moneyProtected && event.isPaid) ...[
+            const MoneyProtectedBadge(),
+            const SizedBox(height: 14),
+          ],
           if (event.guestlistSpots > 0) ...[
             JolCard(
               child: Column(
@@ -1557,6 +1566,7 @@ class _RsvpFormState extends ConsumerState<_RsvpForm> {
       }
       ref.invalidate(myRsvpsProvider);
       ref.invalidate(attendeeEventProvider); // every copy, incl. one opened by link code
+      HapticFeedback.mediumImpact();
       if (!mounted) return;
       Navigator.pop(context);
       JolToast.show(
