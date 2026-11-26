@@ -3,12 +3,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'app_version.dart';
+
 const _apiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
-/// Live Laravel Cloud backend. Override for local testing with
-/// `--dart-define=API_BASE_URL=http://<your-pc-ip>:8000/api/v1`
-const defaultApiBaseUrl =
-    'https://jol-backend-production-xgp5ka.laravel.cloud/api/v1';
+/// The live JOL server (jolnow.co.za, hosted on Laravel Cloud). Override for
+/// local testing with `--dart-define=API_BASE_URL=http://<your-pc-ip>:8000/api/v1`
+const defaultApiBaseUrl = 'https://jolnow.co.za/api/v1';
 
 String get configuredApiBaseUrl =>
     _apiBaseUrl.isEmpty ? defaultApiBaseUrl : _apiBaseUrl;
@@ -58,7 +59,27 @@ final apiClientProvider = Provider<Dio>((ref) {
         if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
         }
+        if (AppBuild.version.isNotEmpty) {
+          options.headers['X-App-Version'] = AppBuild.version;
+          options.headers['X-App-Platform'] = AppBuild.platform;
+        }
         handler.next(options);
+      },
+      onError: (error, handler) {
+        // This app version is too old: the server asks for an update.
+        final data = error.response?.data;
+        if (error.response?.statusCode == 426 && data is Map && data['error'] is Map) {
+          final details = (data['error'] as Map)['details'];
+          ref.read(appUpdateProvider.notifier).show(
+            AppUpdate(
+              required: true,
+              message: (data['error'] as Map)['message'] as String?,
+              latest: details is Map ? details['latest_version'] as String? : null,
+              storeUrl: details is Map ? details['store_url'] as String? : null,
+            ),
+          );
+        }
+        handler.next(error);
       },
     ),
   );
@@ -72,26 +93,30 @@ final apiClientProvider = Provider<Dio>((ref) {
 });
 
 class ApiException implements Exception {
-  const ApiException(this.message);
+  const ApiException(this.message, {this.code});
 
   final String message;
+
+  /// The server's error code, e.g. `TWO_FACTOR_REQUIRED`, when it sent one.
+  final String? code;
 
   factory ApiException.fromDio(DioException exception) {
     final response = exception.response?.data;
     if (response is Map) {
       final error = response['error'];
       if (error is Map) {
+        final code = error['code'] is String ? error['code'] as String : null;
         final details = error['details'];
         if (details is Map) {
           for (final value in details.values) {
             if (value is List && value.isNotEmpty) {
-              return ApiException(value.first.toString());
+              return ApiException(value.first.toString(), code: code);
             }
           }
         }
         final message = error['message'];
         if (message is String && message.isNotEmpty) {
-          return ApiException(message);
+          return ApiException(message, code: code);
         }
       }
       final message = response['message'];

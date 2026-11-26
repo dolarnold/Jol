@@ -23,7 +23,7 @@ import '../../../ui/widgets/jol_list_row.dart';
 import '../../../ui/widgets/jol_segmented.dart';
 import '../../../ui/widgets/jol_sheet.dart';
 import '../../../ui/widgets/jol_toast.dart';
-import '../../auth/student_email_validator.dart';
+import '../../profile/growth_screens.dart';
 
 class TicketSelectionScreen extends ConsumerStatefulWidget {
   const TicketSelectionScreen({super.key, required this.eventId});
@@ -135,13 +135,48 @@ class _TicketSelectionScreenState extends ConsumerState<TicketSelectionScreen> {
                 ],
               ),
             ),
+          if (selectedTier.isTable && selectedTier.freeTables.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String?>(
+              // Rebuilt when the tier changes, so the choice starts fresh.
+              key: ValueKey('table-${selectedTier.id}'),
+              initialValue:
+                  selectedTier.freeTables.contains(state.selectedTable)
+                  ? state.selectedTable
+                  : null,
+              decoration: const InputDecoration(labelText: 'Table'),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Any free table'),
+                ),
+                for (final table in selectedTier.freeTables)
+                  DropdownMenuItem<String?>(value: table, child: Text(table)),
+              ],
+              onChanged: controller.selectTable,
+            ),
+          ],
+          if (selectedTier.isBundle) ...[
+            const SizedBox(height: 8),
+            Text(
+              'The price is for the whole ${selectedTier.unitName}. You get '
+              '${selectedTier.peoplePerTicket} tickets: send one to each '
+              'friend from Tickets so they have their own QR code.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: tokens.muted),
+            ),
+          ],
           const SizedBox(height: 18),
           JolCard(
             child: Row(
               children: [
                 Expanded(
                   child: Text(
-                    'Quantity',
+                    selectedTier.isTable
+                        ? 'Tables'
+                        : selectedTier.isBundle
+                        ? 'Groups'
+                        : 'Quantity',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
@@ -226,6 +261,12 @@ class _TierTile extends StatelessWidget {
                             : null,
                       ),
                     ),
+                    if (tier.isBundle)
+                      Text(
+                        '${tier.bundleLabel} · everyone gets a ticket',
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: tokens.muted),
+                      ),
                     if (tier.description.isNotEmpty)
                       Text(
                         tier.description,
@@ -234,7 +275,9 @@ class _TierTile extends StatelessWidget {
                       ),
                     if (tier.remaining != null)
                       Text(
-                        '${tier.remaining} left',
+                        tier.isBundle
+                            ? '${tier.remaining} ${tier.unitName}s left'
+                            : '${tier.remaining} left',
                         style: Theme.of(context).textTheme.bodySmall
                             ?.copyWith(color: tokens.muted),
                       ),
@@ -305,6 +348,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   Timer? _timer;
   var _secondsRemaining = 8 * 60;
   var _isPaying = false;
+  PromoQuote? _promo;
 
   @override
   void initState() {
@@ -338,7 +382,12 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       (item) => item.id == state.selectedTierId,
       orElse: () => event.tiers.first,
     );
-    final total = tier.price * state.quantity;
+    final total = _promo == null
+        ? tier.price * state.quantity
+        : (_promo!.amount * state.quantity).round();
+    // JOL credit (gift cards, invites) can pay when it covers the whole order.
+    final credit = ref.watch(creditWalletProvider).value?.balance ?? 0;
+    final canUseCredit = total > 0 && credit >= total;
     final minutes = (_secondsRemaining ~/ 60).toString().padLeft(2, '0');
     final seconds = (_secondsRemaining % 60).toString().padLeft(2, '0');
 
@@ -373,6 +422,23 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                   subtitle: '${event.title} · ${state.quantity} ticket(s)',
                   trailing: Text(formatZar(total)),
                 ),
+                if (tier.price > 0) ...[
+                  const Divider(height: 18),
+                  JolListRow(
+                    title: _promo == null
+                        ? 'Have a promo code?'
+                        : 'Code ${_promo!.code} · ${_promo!.label}',
+                    subtitle: _promo == null
+                        ? null
+                        : 'You save ${formatZar((_promo!.discount * state.quantity).round())}',
+                    trailing: Icon(
+                      _promo == null ? Icons.local_offer_outlined : Icons.close,
+                    ),
+                    onTap: _promo == null
+                        ? () => _enterPromo(event, tier)
+                        : () => setState(() => _promo = null),
+                  ),
+                ],
                 const Divider(height: 18),
                 JolListRow(
                   title: 'Total',
@@ -389,7 +455,12 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           JolCard(
             child: Column(
               children: [
-                for (final method in ['Card', 'Instant EFT', 'Mobile payment'])
+                for (final method in [
+                  'Card',
+                  'Instant EFT',
+                  'Mobile payment',
+                  if (canUseCredit) 'JOL credit',
+                ])
                   Semantics(
                     button: true,
                     selected: state.paymentMethod == method,
@@ -467,6 +538,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             quantity: state.quantity,
             guestName: user.name,
             guestPhone: phone,
+            promoCode: _promo?.code,
+            tableName: state.selectedTable,
+            useCredit: state.paymentMethod == 'JOL credit',
             openCheckout: (url) =>
                 launchUrl(url, mode: LaunchMode.externalApplication),
           );
@@ -488,9 +562,47 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           PurchaseOutcome.declined => MockPaymentOutcome.declined,
         });
     ref.invalidate(myTicketsProvider);
-    ref.invalidate(attendeeEventProvider(event.id));
+    ref.invalidate(attendeeEventProvider); // every copy, incl. one opened by link code
     setState(() => _isPaying = false);
     context.go('/payment-result/${event.id}');
+  }
+
+  Future<void> _enterPromo(JolEvent event, JolTicketTier tier) async {
+    final controller = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Promo code'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(hintText: 'e.g. EARLY20'),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+    if (code == null || code.trim().isEmpty || !mounted) return;
+    try {
+      final quote = await ref
+          .read(bookingRepositoryProvider)
+          .checkPromo(eventId: event.id, tierId: tier.id, code: code.trim());
+      if (!mounted) return;
+      setState(() => _promo = quote);
+      JolToast.show(context, 'Code applied.');
+    } on ApiException catch (error) {
+      if (mounted) JolToast.show(context, error.message);
+    }
   }
 }
 
@@ -530,8 +642,9 @@ class PaymentResultScreen extends ConsumerWidget {
       MockPaymentOutcome.pending => (
         Icons.hourglass_bottom,
         'payment pending',
-        'Please don’t pay again. Your ticket shows in Tickets once '
-            'the payment is confirmed.',
+        'Finish paying on the Paystack page that opened. Your tickets '
+            'show in Tickets once the payment is confirmed. Please don’t '
+            'pay twice.',
       ),
     };
     return Scaffold(
@@ -937,6 +1050,15 @@ class _TicketQrScreenState extends ConsumerState<TicketQrScreen> {
                           Text(
                             '${ticket.tierName ?? 'Ticket'} · ${ticket.guestName}',
                           ),
+                          if (ticket.tableName != null)
+                            Text('Table: ${ticket.tableName}'),
+                          if (ticket.isGroupGuest)
+                            Text(
+                              'Part of a group booking: send it to a friend '
+                              'with Transfer.',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: tokens.muted),
+                            ),
                           Text(
                             'Turn your brightness up at the door.',
                             style: Theme.of(context).textTheme.bodySmall
@@ -961,6 +1083,44 @@ class _TicketQrScreenState extends ConsumerState<TicketQrScreen> {
                 onPressed: () =>
                     _showTransferSheet(context, ref, event, ticket.id),
               ),
+            ],
+            if (ticket != null && !ticket.isPending && ticket.ticketPageUrl != null) ...[
+              const SizedBox(height: 10),
+              JolButton(
+                label: 'Ticket page · save as PDF',
+                expanded: true,
+                variant: JolButtonVariant.ghost,
+                onPressed: () => launchUrl(
+                  Uri.parse(ticket.ticketPageUrl!),
+                  mode: LaunchMode.externalApplication,
+                ),
+              ),
+            ],
+            if (ticket != null && event.isPaid && ticket.isValid) ...[
+              const SizedBox(height: 10),
+              if (ticket.refundStatus != null)
+                Text(
+                  switch (ticket.refundStatus) {
+                    'pending' => 'Refund requested · waiting for the organiser',
+                    'approved' => 'Refund approved',
+                    'declined' => 'Refund request declined',
+                    _ => 'Refund ${ticket.refundStatus}',
+                  },
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                )
+              else
+                JolButton(
+                  label: 'Request a refund',
+                  expanded: true,
+                  variant: JolButtonVariant.ghost,
+                  onPressed: () => _requestRefund(context, ref, ticket.id),
+                ),
+              if (!ticket.isGroupGuest)
+                TextButton(
+                  onPressed: () => _reportPaymentProblem(context, ref, ticket.id),
+                  child: const Text('Report a problem with this payment'),
+                ),
             ],
             if (event.isAgeRestricted) ...[
               const SizedBox(height: 14),
@@ -997,6 +1157,131 @@ class _TicketQrScreenState extends ConsumerState<TicketQrScreen> {
         ),
       ),
     );
+  }
+}
+
+Future<void> _requestRefund(
+  BuildContext context,
+  WidgetRef ref,
+  String ticketId,
+) async {
+  final reason = TextEditingController();
+  final send = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Request a refund'),
+      content: TextField(
+        controller: reason,
+        maxLines: 3,
+        maxLength: 500,
+        decoration: const InputDecoration(
+          hintText: 'Tell the organiser why (required)',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Send request'),
+        ),
+      ],
+    ),
+  );
+  if (send != true || !context.mounted) return;
+  if (reason.text.trim().length < 5) {
+    JolToast.show(context, 'Please give a short reason.');
+    return;
+  }
+  try {
+    final message = await ref
+        .read(bookingRepositoryProvider)
+        .requestRefund(ticketId, reason.text.trim());
+    ref.invalidate(myTicketsProvider);
+    if (context.mounted) JolToast.show(context, message);
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
+  }
+}
+
+Future<void> _reportPaymentProblem(
+  BuildContext context,
+  WidgetRef ref,
+  String ticketId,
+) async {
+  const reasons = {
+    'event_cancelled': 'The event was cancelled or didn’t happen',
+    'not_let_in': 'I wasn’t let in with a valid ticket',
+    'not_as_described': 'The event was very different from its listing',
+    'charged_wrong': 'I was charged the wrong amount or twice',
+    'other': 'Something else',
+  };
+  var reason = reasons.keys.first;
+  final details = TextEditingController();
+  final send = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('Report a problem'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'If the organiser can’t sort it out, the JOL team looks into '
+                'it and replies within 3 working days.',
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: reason,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'What went wrong'),
+                items: [
+                  for (final entry in reasons.entries)
+                    DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+                ],
+                onChanged: (value) => setState(() => reason = value ?? reason),
+              ),
+              TextField(
+                controller: details,
+                minLines: 3,
+                maxLines: 6,
+                maxLength: 2000,
+                decoration: const InputDecoration(
+                  labelText: 'What happened',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Send to JOL'),
+          ),
+        ],
+      ),
+    ),
+  );
+  final text = details.text.trim();
+  if (send != true || !context.mounted) return;
+  if (text.length < 10) {
+    JolToast.show(context, 'Tell us a little more about what happened.');
+    return;
+  }
+  try {
+    final message = await ref
+        .read(bookingRepositoryProvider)
+        .reportPaymentProblem(ticketId, reason: reason, details: text);
+    if (context.mounted) JolToast.show(context, message);
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
   }
 }
 
@@ -1411,18 +1696,83 @@ class StudentVerificationScreen extends ConsumerStatefulWidget {
       _StudentVerificationScreenState();
 }
 
+/// Student status: the university email gets a 6-digit code, valid 24 hours.
+/// JOL only sends it to the university domains its team has listed.
 class _StudentVerificationScreenState
     extends ConsumerState<StudentVerificationScreen> {
   final _email = TextEditingController();
   final _code = TextEditingController();
   var _codeSent = false;
-  var _error = false;
+  var _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  Future<void> _loadStatus() async {
+    try {
+      final status = await ref.read(profileRepositoryProvider).studentStatus();
+      if (status.verified && status.email != null && mounted) {
+        ref.read(attendeeControllerProvider.notifier).verifyStudent(status.email!);
+      }
+    } on ApiException {
+      // Offline: show the form.
+    }
+  }
 
   @override
   void dispose() {
     _email.dispose();
     _code.dispose();
     super.dispose();
+  }
+
+  Future<void> _send() async {
+    final email = _email.text.trim();
+    if (!email.contains('@')) {
+      setState(() => _error = 'Enter your university email.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final message = await ref.read(profileRepositoryProvider).sendStudentCode(email);
+      if (!mounted) return;
+      setState(() => _codeSent = true);
+      JolToast.show(context, message);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _confirm() async {
+    final code = _code.text.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      setState(() => _error = 'Enter the 6-digit code.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(profileRepositoryProvider).confirmStudentCode(code);
+      if (!mounted) return;
+      ref.read(attendeeControllerProvider.notifier).verifyStudent(_email.text);
+      ref.invalidate(currentUserProvider);
+      JolToast.show(context, 'You’re verified as a student.');
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -1470,8 +1820,8 @@ class _StudentVerificationScreenState
           const SizedBox(height: 8),
           Text(
             _codeSent
-                ? 'Enter the 6-digit code sent to ${_email.text.trim()}.'
-                : 'Use your university email ending in .ac.za.',
+                ? 'Enter the 6-digit code we sent to ${_email.text.trim()}. It works for 24 hours.'
+                : 'Use your university email, like name@myuct.ac.za. We send you a code straight away.',
             style: Theme.of(context).textTheme.bodyLarge
                 ?.copyWith(color: tokens.muted),
           ),
@@ -1480,11 +1830,11 @@ class _StudentVerificationScreenState
             TextField(
               controller: _email,
               keyboardType: TextInputType.emailAddress,
+              autocorrect: false,
               decoration: InputDecoration(
                 labelText: 'University email',
-                errorText: _error
-                    ? "That isn't a student email. Use your university address ending in .ac.za, like name@myuct.ac.za."
-                    : null,
+                errorText: _error,
+                errorMaxLines: 3,
               ),
             )
           else
@@ -1492,55 +1842,32 @@ class _StudentVerificationScreenState
               controller: _code,
               keyboardType: TextInputType.number,
               maxLength: 6,
-              decoration: const InputDecoration(labelText: '6-digit code'),
+              autofillHints: const [AutofillHints.oneTimeCode],
+              decoration: InputDecoration(
+                labelText: '6-digit code',
+                errorText: _error,
+              ),
             ),
           const SizedBox(height: 12),
           JolButton(
-            label: _codeSent ? 'Verify code' : 'Send code',
+            label: _busy
+                ? 'Please wait…'
+                : _codeSent
+                ? 'Verify code'
+                : 'Send code',
             expanded: true,
-            onPressed: () {
-              if (!_codeSent) {
-                if (!isValidStudentEmail(_email.text)) {
-                  setState(() => _error = true);
-                  return;
-                }
-                setState(() {
-                  _error = false;
-                  _codeSent = true;
-                });
-                JolToast.show(
-                  context,
-                  'Verification code sent to ${_email.text.trim()}.',
-                );
-                return;
-              }
-              if (_code.text.trim().length != 6) {
-                JolToast.show(context, 'Enter the 6-digit code.');
-                return;
-              }
-              if (!_code.text.trim().contains(RegExp(r'^\d{6}$'))) {
-                JolToast.show(context, 'Enter the 6-digit code.');
-                return;
-              }
-
-              ref
-                  .read(attendeeControllerProvider.notifier)
-                  .verifyStudent(_email.text);
-              JolToast.show(context, 'Student verification complete.');
-            },
+            onPressed: _busy ? null : (_codeSent ? _confirm : _send),
           ),
           if (_codeSent) ...[
             TextButton(
-              onPressed: () {
-                JolToast.show(
-                  context,
-                  'A fresh verification code has been sent to ${_email.text.trim()}.',
-                );
-              },
+              onPressed: _busy ? null : _send,
               child: const Text('Send a new code'),
             ),
             TextButton(
-              onPressed: () => setState(() => _codeSent = false),
+              onPressed: () => setState(() {
+                _codeSent = false;
+                _error = null;
+              }),
               child: const Text('Change email'),
             ),
           ],

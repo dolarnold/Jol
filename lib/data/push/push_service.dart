@@ -1,3 +1,7 @@
+// getToken/onTokenRefresh still work; firebase_messaging's newer register()/
+// onRegistered API can replace them once it settles.
+// ignore_for_file: deprecated_member_use
+
 import 'dart:async';
 import 'dart:io';
 
@@ -14,6 +18,9 @@ import 'package:flutter/foundation.dart';
 abstract final class PushService {
   static var _ready = false;
   static StreamSubscription<String>? _refresh;
+
+  /// Whether Firebase started (crash reports use it too).
+  static bool get firebaseReady => _ready;
 
   static Future<void> initFirebase() async {
     try {

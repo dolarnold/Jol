@@ -6,6 +6,14 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Firebase (push notifications and crash reports) switches on by itself once
+// android/app/google-services.json is there (`flutterfire configure` puts it there).
+// Without it the app still builds and runs, just without push and crash reports.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
+}
+
 // Google Maps key: GOOGLE_MAPS_API_KEY in android/local.properties (not
 // committed) or as an environment variable on the build machine.
 val localProperties = Properties().apply {

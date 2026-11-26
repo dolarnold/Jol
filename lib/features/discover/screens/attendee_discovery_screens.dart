@@ -178,12 +178,6 @@ class DiscoverScreen extends ConsumerWidget {
           ),
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-              child: _RoleSwitchCard(),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
                 children: [
@@ -923,6 +917,14 @@ class EventDetailsView extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
+        // Opened from a shared link: there's nothing to go back to, so offer home.
+        leading: context.canPop()
+            ? null
+            : IconButton(
+                tooltip: 'Home',
+                icon: const Icon(Icons.home_outlined),
+                onPressed: () => context.go('/splash'),
+              ),
         title: Text(preview ? 'preview' : 'event'),
         actions: preview ? null : [
           AttendeeIconButton(
@@ -1151,6 +1153,36 @@ class EventDetailsView extends ConsumerWidget {
                   trailing: const Icon(Icons.flag_outlined),
                   onTap: () => _showReportSheet(context, event),
                 ),
+                if (event.hostId != null && !event.viewerIsHost) ...[
+                  const Divider(height: 12),
+                  JolListRow(
+                    title: event.viewerFollowsHost
+                        ? 'Following ${event.host}'
+                        : 'Follow ${event.host}',
+                    subtitle: [
+                      if (event.hostRating != null)
+                        '★ ${event.hostRating!.toStringAsFixed(1)} from ${event.hostReviewCount} review${event.hostReviewCount == 1 ? '' : 's'}',
+                      event.viewerFollowsHost
+                          ? 'You’ll hear about their new events'
+                          : 'Get told when they post a new event',
+                    ].join(' · '),
+                    trailing: Icon(
+                      event.viewerFollowsHost
+                          ? Icons.check_circle
+                          : Icons.person_add_alt_1_outlined,
+                    ),
+                    onTap: () => _toggleFollow(context, ref, event),
+                  ),
+                ],
+                if (event.viewerCanReview) ...[
+                  const Divider(height: 12),
+                  JolListRow(
+                    title: 'Rate this event',
+                    subtitle: 'Only people who went can rate it',
+                    trailing: const Icon(Icons.star_outline),
+                    onTap: () => _rateEvent(context, ref, event),
+                  ),
+                ],
                 if (event.acceptsPromoterRequests && !event.viewerIsHost) ...[
                   const Divider(height: 12),
                   JolListRow(
@@ -1186,10 +1218,8 @@ class EventDetailsView extends ConsumerWidget {
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
         child: JolButton(
-          label: event.isApiBacked
-              ? 'Bookings coming soon'
-              : event.isSoldOut
-              ? 'Sold out · Notify me'
+          label: event.isSoldOut
+              ? (event.isPaid ? 'Sold out · Join waitlist' : 'Sold out · Notify me')
               : event.isPaid
               ? (event.fromPrice == 0
                     ? 'Get free tickets'
@@ -1205,6 +1235,8 @@ class EventDetailsView extends ConsumerWidget {
               : JolButtonVariant.primary,
           onPressed: preview
               ? null
+              : event.isSoldOut && event.isPaid && event.tiers.isNotEmpty
+              ? () => _joinWaitlist(context, ref, event)
               : event.isSoldOut
               ? () => JolToast.show(
                   context,
@@ -1503,7 +1535,7 @@ class _RsvpFormState extends ConsumerState<_RsvpForm> {
         controller.rsvp(widget.event.id, plusOne: _plusOnes);
       }
       ref.invalidate(myRsvpsProvider);
-      ref.invalidate(attendeeEventProvider(widget.event.id));
+      ref.invalidate(attendeeEventProvider); // every copy, incl. one opened by link code
       if (!mounted) return;
       Navigator.pop(context);
       JolToast.show(
@@ -1865,85 +1897,6 @@ void _addEventToCalendar(JolEvent event) {
   Add2Calendar.addEvent2Cal(calendarEvent);
 }
 
-class _RoleSwitchCard extends ConsumerWidget {
-  const _RoleSwitchCard();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final mode = ref.watch(
-      attendeeControllerProvider.select((state) => state.accessMode),
-    );
-    final tokens = JolTokens.of(context);
-    final options = [
-      (
-        label: 'Normal user',
-        mode: AppAccessMode.attendee,
-        icon: Icons.person_outline,
-      ),
-      (
-        label: 'Host',
-        mode: AppAccessMode.host,
-        icon: Icons.event_available_outlined,
-      ),
-      (label: 'Staff', mode: AppAccessMode.staff, icon: Icons.badge_outlined),
-    ];
-
-    return JolCard(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('View as', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final option in options)
-                  ChoiceChip(
-                    label: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(option.icon, size: 16),
-                        const SizedBox(width: 6),
-                        Text(option.label),
-                      ],
-                    ),
-                    selected: mode == option.mode,
-                    onSelected: (_) {
-                      ref
-                          .read(attendeeControllerProvider.notifier)
-                          .setAccessMode(option.mode);
-                      switch (option.mode) {
-                        case AppAccessMode.attendee:
-                          context.go('/discover');
-                        case AppAccessMode.host:
-                          context.go('/host');
-                        case AppAccessMode.staff:
-                          context.go('/staff');
-                      }
-                    },
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              switch (mode) {
-                AppAccessMode.attendee => 'Normal attendee mode',
-                AppAccessMode.host => 'Host dashboard enabled',
-                AppAccessMode.staff => 'Door staff checklist enabled',
-              },
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: tokens.muted),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 String _weekday(DateTime date) {
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   return days[date.weekday - 1];
@@ -1953,3 +1906,91 @@ bool _sameDay(DateTime first, DateTime second) =>
     first.year == second.year &&
     first.month == second.month &&
     first.day == second.day;
+
+Future<void> _joinWaitlist(BuildContext context, WidgetRef ref, JolEvent event) async {
+  final tier = event.tiers.firstWhere(
+    (tier) => tier.isSoldOut,
+    orElse: () => event.tiers.first,
+  );
+  try {
+    final message = await ref
+        .read(bookingRepositoryProvider)
+        .joinWaitlist(event.id, tier.id);
+    if (context.mounted) JolToast.show(context, message);
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
+  }
+}
+
+Future<void> _toggleFollow(BuildContext context, WidgetRef ref, JolEvent event) async {
+  try {
+    final message = await ref
+        .read(bookingRepositoryProvider)
+        .setFollowing(event.hostId!, follow: !event.viewerFollowsHost);
+    ref.invalidate(attendeeEventProvider); // every copy, incl. one opened by link code
+    if (context.mounted) JolToast.show(context, message);
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
+  }
+}
+
+Future<void> _rateEvent(BuildContext context, WidgetRef ref, JolEvent event) async {
+  var rating = 0;
+  final comment = TextEditingController();
+  final submitted = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: Text('How was ${event.title}?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                for (var star = 1; star <= 5; star++)
+                  IconButton(
+                    tooltip: '$star star${star == 1 ? '' : 's'}',
+                    onPressed: () => setState(() => rating = star),
+                    icon: Icon(
+                      star <= rating ? Icons.star : Icons.star_border,
+                      color: Colors.amber.shade700,
+                      size: 32,
+                    ),
+                  ),
+              ],
+            ),
+            TextField(
+              controller: comment,
+              maxLength: 1000,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'Anything to add? (optional)',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not now'),
+          ),
+          TextButton(
+            onPressed: rating == 0 ? null : () => Navigator.pop(context, true),
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (submitted != true || !context.mounted) return;
+  try {
+    final message = await ref
+        .read(bookingRepositoryProvider)
+        .rateEvent(event.id, rating, comment.text);
+    ref.invalidate(attendeeEventProvider); // every copy, incl. one opened by link code
+    if (context.mounted) JolToast.show(context, message);
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
+  }
+}

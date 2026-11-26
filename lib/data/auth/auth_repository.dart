@@ -20,8 +20,18 @@ class AuthRepository {
   final Dio _dio;
   final TokenStore _tokenStore;
 
-  Future<void> login({required String login, required String password}) async {
-    await _authenticate('/auth/login', {'login': login, 'password': password});
+  /// [twoFactorCode] is needed for accounts with two-step login; without it the
+  /// server answers with an [ApiException] whose code is `TWO_FACTOR_REQUIRED`.
+  Future<void> login({
+    required String login,
+    required String password,
+    String? twoFactorCode,
+  }) async {
+    await _authenticate('/auth/login', {
+      'login': login,
+      'password': password,
+      'two_factor_code': ?twoFactorCode,
+    });
   }
 
   Future<void> registerAttendee({
@@ -29,6 +39,7 @@ class AuthRepository {
     required String email,
     required String phone,
     required String password,
+    bool marketingOptIn = false,
   }) async {
     await _authenticate('/auth/register-attendee', {
       'name': name,
@@ -36,6 +47,9 @@ class AuthRepository {
       'phone': phone,
       'password': password,
       'password_confirmation': password,
+      // Tapping "Create account" next to the privacy notice line accepts it.
+      'accept_privacy': true,
+      'marketing_opt_in': marketingOptIn,
     });
   }
 

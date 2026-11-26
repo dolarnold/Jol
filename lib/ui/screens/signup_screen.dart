@@ -26,6 +26,9 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   var _isSubmitting = false;
+  // Marketing is opt-in only (POPIA s69): unticked until they choose it.
+  var _marketingOptIn = false;
+  var _hidePassword = true;
   String? _errorMessage;
 
   @override
@@ -52,11 +55,12 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
             email: _emailController.text.trim(),
             phone: '+27${_phoneController.text.trim()}',
             password: _passwordController.text,
+            marketingOptIn: _marketingOptIn,
           );
       if (!mounted) return;
       JolToast.show(
         context,
-        'Account created. You’re signed in.',
+        'Account created. We emailed you a link to verify your email.',
       );
       ref.invalidate(currentUserProvider);
       context.go('/discover');
@@ -143,21 +147,34 @@ class _SignUpScreenState extends ConsumerState<SignUpScreen> {
                         child: TextFormField(
                           key: const ValueKey('signup-password'),
                           controller: _passwordController,
-                          obscureText: true,
+                          obscureText: _hidePassword,
+                          autofillHints: const [AutofillHints.newPassword],
                           textInputAction: TextInputAction.done,
                           validator: (value) => (value ?? '').length < 8
                               ? 'Use at least 8 characters.'
                               : null,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             hintText: 'At least 8 characters',
+                            suffixIcon: IconButton(
+                              tooltip: _hidePassword ? 'Show password' : 'Hide password',
+                              icon: Icon(_hidePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                              onPressed: () => setState(() => _hidePassword = !_hidePassword),
+                            ),
                           ),
                         ),
                       ),
                       const SizedBox(height: 12),
-                      Text(
-                        'Student verification is not connected to the API yet.',
-                        style: Theme.of(context).textTheme.bodySmall
-                            ?.copyWith(color: tokens.muted),
+                      CheckboxListTile(
+                        key: const ValueKey('signup-marketing'),
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: _marketingOptIn,
+                        onChanged: (value) =>
+                            setState(() => _marketingOptIn = value ?? false),
+                        title: const Text(
+                          'Send me news, tips and offers from JOL. '
+                          'Optional; you can stop any time.',
+                        ),
                       ),
                       if (_errorMessage != null) ...[
                         const SizedBox(height: 16),
@@ -259,7 +276,8 @@ class _SignUpFooter extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              'By continuing, you agree to JOL’s Terms and Privacy Policy.',
+              'By creating an account, you accept JOL’s privacy notice '
+              '(Profile → Legal).',
               style: Theme.of(context).textTheme.bodyMedium
                   ?.copyWith(color: tokens.muted, fontSize: 13),
             ),

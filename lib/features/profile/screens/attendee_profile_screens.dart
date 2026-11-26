@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../attendee/state/attendee_controller.dart';
 import '../../../data/api/api_client.dart';
 import '../../../data/auth/auth_repository.dart';
+import '../../../data/auth/privacy_repository.dart';
 import '../../../data/auth/profile_repository.dart';
 import '../../../data/booking/booking_repository.dart';
 import '../../discover/data/event_repository.dart';
@@ -14,6 +15,8 @@ import '../../discover/models/jol_event.dart';
 import '../../hosting/data/hosting_repository.dart';
 import '../../inbox/inbox_screens.dart';
 import '../../hosting/screens/event_form_screen.dart';
+import '../../hosting/screens/host_mode.dart';
+import '../growth_screens.dart';
 import '../../../ui/theme/jol_theme.dart';
 import '../../../ui/widgets/jol_button.dart';
 import '../../../ui/widgets/jol_card.dart';
@@ -52,6 +55,9 @@ class AttendeeMeScreen extends ConsumerWidget {
           const _AccountWarningsBanner(),
           const SizedBox(height: 18),
           const _ProfileHeaderCard(),
+          const SizedBox(height: 14),
+          // One account: switch between going out and hosting.
+          const JolModeSwitch(),
           const SizedBox(height: 14),
           JolCard(
             child: JolListRow(
@@ -109,6 +115,9 @@ class AttendeeMeScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 22),
+          _ProfileSectionTitle(title: 'privacy & data'),
+          const _PrivacyDataCard(),
+          const SizedBox(height: 22),
           _ProfileSectionTitle(title: 'staff features'),
           JolCard(
             child: Column(
@@ -131,9 +140,12 @@ class AttendeeMeScreen extends ConsumerWidget {
             child: Column(
               children: [
                 JolListRow(
-                  title: 'Payment methods',
+                  title: 'JOL credit',
+                  subtitle: 'Gift cards and invites',
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _notConnected(context, 'Payment methods'),
+                  onTap: () => Navigator.of(context, rootNavigator: true).push(
+                    MaterialPageRoute<void>(builder: (_) => const CreditScreen()),
+                  ),
                 ),
                 const Divider(height: 12),
                 JolListRow(
@@ -151,16 +163,19 @@ class AttendeeMeScreen extends ConsumerWidget {
                 ),
                 const Divider(height: 12),
                 JolListRow(
-                  title: 'Hosting',
+                  title: 'Host details & payouts',
+                  subtitle: 'Bank account, ID and business details',
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => context.go('/host'),
+                  onTap: () => Navigator.of(context, rootNavigator: true).push(
+                    MaterialPageRoute<void>(builder: (_) => const HostProfileScreen()),
+                  ),
                 ),
                 const Divider(height: 12),
                 JolListRow(
                   title: 'Help',
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.of(context, rootNavigator: true).push(
-                    MaterialPageRoute<void>(builder: (_) => const SupportMessagesScreen()),
+                    MaterialPageRoute<void>(builder: (_) => const HelpScreen()),
                   ),
                 ),
               ],
@@ -222,6 +237,11 @@ class HostDashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(
+      attendeeControllerProvider.select((state) => state.accessMode),
+    );
+    // Going-out mode: explain hosting and offer the switch.
+    if (mode != AppAccessMode.host) return const HostIntroView();
     final tokens = JolTokens.of(context);
     final eventsResult = ref.watch(myEventsProvider);
     final hosted = (eventsResult.asData?.value ?? const <HostedEvent>[])
@@ -234,7 +254,7 @@ class HostDashboardScreen extends ConsumerWidget {
           ..sort((a, b) => a.event.date.compareTo(b.event.date));
     final next = upcoming.firstOrNull;
     final revenue = hosted.fold<double>(0, (sum, item) => sum + item.ticketRevenue);
-    final checkedIn = hosted.fold<int>(0, (sum, item) => sum + item.checkedIn);
+    final checkedIn = hosted.fold<int>(0, (sum, item) => sum + item.checkedIn + item.guestsCheckedIn);
     final guests = hosted.fold<int>(
       0,
       (sum, item) => sum + item.goingCount + item.ticketsSold,
@@ -260,7 +280,10 @@ class HostDashboardScreen extends ConsumerWidget {
               style: Theme.of(context).textTheme.bodyLarge
                   ?.copyWith(color: tokens.muted),
             ),
+            const SizedBox(height: 14),
+            const JolModeSwitch(),
             const SizedBox(height: 18),
+            const HostReadinessCard(),
             if (eventsResult.isLoading && eventsResult.asData == null)
               const Padding(
                 padding: EdgeInsets.all(24),
@@ -349,21 +372,19 @@ class HostDashboardScreen extends ConsumerWidget {
                   ),
                   const Divider(height: 12),
                   JolListRow(
-                    title: 'Scan tickets',
-                    subtitle: 'Check guests in at the door',
+                    title: 'Door',
+                    subtitle: 'Scan tickets, guest list and door sales',
                     trailing: const Icon(Icons.qr_code_2_outlined),
                     onTap: () => context.push('/staff'),
                   ),
                   const Divider(height: 12),
                   JolListRow(
-                    title: 'Switch to attendee',
-                    trailing: const Icon(Icons.arrow_back),
-                    onTap: () {
-                      ref
-                          .read(attendeeControllerProvider.notifier)
-                          .setAccessMode(AppAccessMode.attendee);
-                      context.go('/discover');
-                    },
+                    title: 'Host details & payouts',
+                    subtitle: 'Bank account, ID and business details',
+                    trailing: const Icon(Icons.account_balance_outlined),
+                    onTap: () => Navigator.of(context, rootNavigator: true).push(
+                      MaterialPageRoute<void>(builder: (_) => const HostProfileScreen()),
+                    ),
                   ),
                 ],
               ),
@@ -406,7 +427,7 @@ class _HostedEventCard extends ConsumerWidget {
                   const SizedBox(height: 4),
                   Text(
                     '${item.goingCount} RSVPs · ${item.ticketsSold} tickets · '
-                    '${item.checkedIn} checked in · '
+                    '${item.checkedIn + item.guestsCheckedIn} checked in · '
                     '${formatZar(item.ticketRevenue.round())}',
                   ),
                 ],
@@ -427,8 +448,14 @@ class _HostedEventCard extends ConsumerWidget {
                   await _publishEvent(context, ref, event);
                 case 'guests':
                   await _showGuestsSheet(context, ref, event);
+                case 'door':
+                  await context.push('/door/${event.id}');
                 case 'share':
                   await context.push('/share/${event.id}');
+                case 'repeat':
+                  await _repeatEvent(context, ref, event);
+                case 'message':
+                  await _messageGuests(context, ref, event);
                 case 'cancel':
                   await _cancelEvent(context, ref, event);
               }
@@ -442,8 +469,14 @@ class _HostedEventCard extends ConsumerWidget {
                 if (upcoming && active)
                   const PopupMenuItem(value: 'edit', child: Text('Edit event')),
                 const PopupMenuItem(value: 'guests', child: Text('Guest list')),
+                if (!event.isDraft && active)
+                  const PopupMenuItem(value: 'door', child: Text('Door: scan, list, sell')),
                 if (!event.isDraft)
                   const PopupMenuItem(value: 'share', child: Text('Share')),
+                if (active)
+                  const PopupMenuItem(value: 'repeat', child: Text('Repeat event')),
+                if (!event.isDraft && active)
+                  const PopupMenuItem(value: 'message', child: Text('Message guests')),
                 if (active)
                   const PopupMenuItem(value: 'cancel', child: Text('Cancel event')),
               ];
@@ -491,6 +524,153 @@ Future<void> _showGuestsSheet(
       },
     ),
   );
+}
+
+Future<void> _repeatEvent(
+  BuildContext context,
+  WidgetRef ref,
+  JolEvent event,
+) async {
+  var frequency = 'weekly';
+  var count = 4;
+  var publish = false;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setState) => AlertDialog(
+        title: const Text('Repeat this event'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Copies it, with its tickets, to later dates. Each date gets its '
+              'own guests and sales.',
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: frequency,
+              decoration: const InputDecoration(labelText: 'How often'),
+              items: const [
+                DropdownMenuItem(value: 'weekly', child: Text('Every week')),
+                DropdownMenuItem(
+                  value: 'fortnightly',
+                  child: Text('Every two weeks'),
+                ),
+                DropdownMenuItem(value: 'monthly', child: Text('Every month')),
+              ],
+              onChanged: (value) => setState(() => frequency = value ?? frequency),
+            ),
+            DropdownButtonFormField<int>(
+              initialValue: count,
+              decoration: const InputDecoration(labelText: 'More dates'),
+              items: [
+                for (var n = 1; n <= 12; n++)
+                  DropdownMenuItem(value: n, child: Text('$n')),
+              ],
+              onChanged: (value) => setState(() => count = value ?? count),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Publish them now'),
+              value: publish,
+              onChanged: (value) => setState(() => publish = value),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Not now'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Add dates'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  try {
+    final added = await ref
+        .read(hostingRepositoryProvider)
+        .repeatEvent(event.id, frequency: frequency, count: count, publish: publish);
+    ref.invalidate(myEventsProvider);
+    if (context.mounted) {
+      JolToast.show(
+        context,
+        publish
+            ? 'Added $added dates. They’re live.'
+            : 'Added $added dates as drafts.',
+      );
+    }
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
+  }
+}
+
+Future<void> _messageGuests(
+  BuildContext context,
+  WidgetRef ref,
+  JolEvent event,
+) async {
+  final subject = TextEditingController();
+  final body = TextEditingController();
+  final send = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Message guests'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'JOL sends it to everyone coming, in the app and by email. '
+              'For updates about this event only.',
+            ),
+            TextField(
+              controller: subject,
+              maxLength: 120,
+              decoration: const InputDecoration(labelText: 'Subject'),
+            ),
+            TextField(
+              controller: body,
+              maxLength: 2000,
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(labelText: 'Message'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('Send'),
+        ),
+      ],
+    ),
+  );
+  final subjectText = subject.text.trim();
+  final bodyText = body.text.trim();
+  if (send != true || !context.mounted) return;
+  if (subjectText.isEmpty || bodyText.isEmpty) {
+    JolToast.show(context, 'Add a subject and a message.');
+    return;
+  }
+  try {
+    final message = await ref
+        .read(hostingRepositoryProvider)
+        .messageGuests(event.id, subject: subjectText, body: bodyText);
+    if (context.mounted) JolToast.show(context, message);
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
+  }
 }
 
 Future<void> _publishEvent(
@@ -541,167 +721,92 @@ Future<void> _cancelEvent(
   }
 }
 
-class StaffDashboardScreen extends ConsumerStatefulWidget {
+/// Door staff and hosts: pick an event, then open its door (scan tickets,
+/// tick guests off the list, sell at the door).
+class StaffDashboardScreen extends ConsumerWidget {
   const StaffDashboardScreen({super.key});
 
   @override
-  ConsumerState<StaffDashboardScreen> createState() =>
-      _StaffDashboardScreenState();
-}
-
-class _StaffDashboardScreenState extends ConsumerState<StaffDashboardScreen> {
-  final _code = TextEditingController();
-  String? _eventId;
-  ScanResult? _result;
-  var _checking = false;
-
-  @override
-  void dispose() {
-    _code.dispose();
-    super.dispose();
-  }
-
-  Future<void> _check() async {
-    final eventId = _eventId;
-    final code = _code.text.trim();
-    if (eventId == null || code.isEmpty) return;
-    setState(() => _checking = true);
-    final result = await ref.read(bookingRepositoryProvider).scanTicket(eventId, code);
-    if (!mounted) return;
-    setState(() {
-      _checking = false;
-      _result = result;
-      if (result.success) _code.clear();
-    });
-    if (result.success) ref.invalidate(myEventsProvider);
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final tokens = JolTokens.of(context);
     final eventsResult = ref.watch(myEventsProvider);
     final now = DateTime.now();
     final yesterday = DateTime(now.year, now.month, now.day - 1);
     final events = (eventsResult.asData?.value ?? const <HostedEvent>[])
-        .where((item) => !item.event.date.isBefore(yesterday))
+        .where((item) => !item.event.date.isBefore(yesterday) && item.event.status != 'cancelled')
         .toList()
       ..sort((a, b) => a.event.date.compareTo(b.event.date));
-    final selected = events.where((item) => item.event.id == _eventId).firstOrNull ??
-        events.firstOrNull;
-    _eventId = selected?.event.id;
 
     return Scaffold(
       appBar: AppBar(title: const Text('staff')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
-        children: [
-          Text('door staff', style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 8),
-          Text(
-            'Check tickets for events you host or work at.',
-            style: Theme.of(context).textTheme.bodyLarge
-                ?.copyWith(color: tokens.muted),
-          ),
-          const SizedBox(height: 18),
-          if (eventsResult.isLoading && eventsResult.asData == null)
-            const Center(child: CircularProgressIndicator())
-          else if (eventsResult.hasError && eventsResult.asData == null)
-            Text('Your events could not be loaded: ${eventsResult.error}')
-          else if (events.isEmpty)
-            const Text(
-              'You have no upcoming events to scan. Ask the organiser to add '
-              'you as door staff.',
-            )
-          else ...[
-            DropdownButtonFormField<String>(
-              initialValue: selected!.event.id,
-              decoration: const InputDecoration(labelText: 'Event'),
-              items: [
-                for (final item in events)
-                  DropdownMenuItem(
-                    value: item.event.id,
-                    child: Text(
-                      '${item.event.title} · ${formatEventDate(item.event.date)}',
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-              onChanged: (value) => setState(() {
-                _eventId = value;
-                _result = null;
-              }),
+      body: RefreshIndicator(
+        onRefresh: () => ref.refresh(myEventsProvider.future),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
+          children: [
+            Text('door', style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Scan tickets, tick guests off the list and sell at the door. '
+              'Save the list before doors open and it keeps working without signal.',
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: tokens.muted),
             ),
             const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: _MetricTile(
-                    label: 'Checked in',
-                    value: '${selected.checkedIn}',
-                    tone: tokens.text,
+            if (eventsResult.isLoading && eventsResult.asData == null)
+              const Center(child: CircularProgressIndicator())
+            else if (eventsResult.hasError && eventsResult.asData == null)
+              Text('Your events could not be loaded: ${eventsResult.error}')
+            else if (events.isEmpty)
+              const Text(
+                'You have no upcoming events. Ask the organiser to add you as '
+                'door staff.',
+              )
+            else
+              for (final item in events) ...[
+                JolCard(
+                  border: true,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      JolListRow(
+                        title: item.event.title,
+                        subtitle: '${formatEventDate(item.event.date)} · ${item.event.startTime} · '
+                            '${item.isHost ? 'Host' : 'Team'}',
+                      ),
+                      Text(
+                        [
+                          if (item.ticketsSold > 0) '${item.checkedIn} of ${item.ticketsSold} tickets in',
+                          '${item.goingCount} RSVPs',
+                          if (item.guestsCheckedIn > 0) '${item.guestsCheckedIn} guests in',
+                        ].join(' · '),
+                        style: TextStyle(color: tokens.muted),
+                      ),
+                      const SizedBox(height: 12),
+                      JolButton(
+                        label: 'Open door',
+                        expanded: true,
+                        onPressed: () => context.push('/door/${item.event.id}'),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _MetricTile(
-                    label: 'Tickets sold',
-                    value: '${selected.ticketsSold}',
-                    tone: tokens.text,
-                  ),
-                ),
+                const SizedBox(height: 12),
               ],
-            ),
-            const SizedBox(height: 18),
-            TextField(
-              controller: _code,
-              textCapitalization: TextCapitalization.characters,
-              onSubmitted: (_) => _check(),
-              decoration: const InputDecoration(
-                labelText: 'Ticket code',
-                hintText: 'JOL-XXXXXXXX',
+            const SizedBox(height: 6),
+            JolCard(
+              child: JolListRow(
+                title: 'Switch to attendee',
+                trailing: const Icon(Icons.arrow_back),
+                onTap: () {
+                  ref
+                      .read(attendeeControllerProvider.notifier)
+                      .setAccessMode(AppAccessMode.attendee);
+                  context.go('/discover');
+                },
               ),
             ),
-            const SizedBox(height: 12),
-            JolButton(
-              label: _checking ? 'Checking…' : 'Check in',
-              expanded: true,
-              onPressed: _checking ? null : _check,
-            ),
-            if (_result != null) ...[
-              const SizedBox(height: 18),
-              JolCard(
-                border: true,
-                child: JolListRow(
-                  title: !_result!.success
-                      ? 'Do not admit'
-                      : _result!.requiresIdCheck
-                      ? 'Check ID · 18+ only'
-                      : 'Admit',
-                  subtitle: [
-                    _result!.message,
-                    if (_result!.guestName != null) _result!.guestName!,
-                  ].join(' · '),
-                  trailing: Icon(
-                    _result!.success ? Icons.check_circle_outline : Icons.block,
-                  ),
-                ),
-              ),
-            ],
           ],
-          const SizedBox(height: 18),
-          JolCard(
-            child: JolListRow(
-              title: 'Switch to attendee',
-              trailing: const Icon(Icons.arrow_back),
-              onTap: () {
-                ref
-                    .read(attendeeControllerProvider.notifier)
-                    .setAccessMode(AppAccessMode.attendee);
-                context.go('/discover');
-              },
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -994,6 +1099,7 @@ Future<void> _showLegalSheet(BuildContext context) async {
         for (final item in [
           'Terms of service',
           'Privacy policy',
+          'Cookie notice',
           'Ticket and refund terms',
           'Community guidelines',
           'Open-source licences',
@@ -1004,7 +1110,8 @@ Future<void> _showLegalSheet(BuildContext context) async {
             onTap: () async {
               final url = switch (item) {
                 'Terms of service' => 'https://www.jol.app/terms',
-                'Privacy policy' => 'https://www.jol.app/privacy',
+                'Privacy policy' => '$siteUrl/privacy',
+                'Cookie notice' => '$siteUrl/cookies',
                 'Ticket and refund terms' => 'https://www.jol.app/tickets',
                 'Community guidelines' =>
                   'https://www.jol.app/community-guidelines',
@@ -1189,5 +1296,188 @@ class _EditProfileSheetState extends ConsumerState<_EditProfileSheet> {
         ],
       ),
     );
+  }
+}
+
+/// Marketing choice, "email me my data" and account deletion (POPIA).
+class _PrivacyDataCard extends ConsumerWidget {
+  const _PrivacyDataCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tokens = JolTokens.of(context);
+    final settings = ref.watch(privacySettingsProvider);
+
+    return JolCard(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      child: Column(
+        children: [
+          Material(
+            color: tokens.surface,
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('News and offers from JOL'),
+              subtitle: const Text(
+                'Ticket and account messages always reach you.',
+              ),
+              value: settings.value?.marketingOptIn ?? false,
+              onChanged: settings.hasValue
+                  ? (value) async {
+                      try {
+                        await ref
+                            .read(privacyRepositoryProvider)
+                            .setMarketing(value);
+                        ref.invalidate(privacySettingsProvider);
+                      } on ApiException catch (error) {
+                        if (context.mounted) {
+                          JolToast.show(context, error.message);
+                        }
+                      }
+                    }
+                  : null,
+            ),
+          ),
+          const Divider(height: 1),
+          JolListRow(
+            title: 'Email me my data',
+            subtitle: 'A download link to everything JOL holds about you',
+            trailing: const Icon(Icons.mail_outline),
+            onTap: () async {
+              try {
+                final message = await ref
+                    .read(privacyRepositoryProvider)
+                    .requestExport();
+                if (context.mounted) JolToast.show(context, message);
+              } on ApiException catch (error) {
+                if (context.mounted) JolToast.show(context, error.message);
+              }
+            },
+          ),
+          const Divider(height: 1),
+          JolListRow(
+            title: 'Delete my account',
+            subtitle: 'Removes your details for good',
+            trailing: Icon(
+              Icons.delete_outline,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            onTap: settings.hasValue
+                ? () => _confirmDeleteAccount(context, ref, settings.value!)
+                : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _confirmDeleteAccount(
+  BuildContext context,
+  WidgetRef ref,
+  PrivacySettings settings,
+) async {
+  if (settings.deleteBlockers.isNotEmpty) {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Not yet'),
+        content: Text(settings.deleteBlockers.join('\n\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    return;
+  }
+
+  final password = TextEditingController();
+  final code = TextEditingController();
+  final typed = TextEditingController();
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Delete your account?'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Your name, email, phone, photo and messages are removed and '
+              'you’re signed out. This can’t be undone. Payment records are '
+              'kept for 5 years without your name, as tax law requires.',
+            ),
+            if (settings.upcomingTickets > 0) ...[
+              const SizedBox(height: 10),
+              Text(
+                'Your ${settings.upcomingTickets} upcoming ticket(s) will be '
+                'cancelled without a refund. Transfer them first to keep them.',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: password,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
+            ),
+            if (settings.twoFactorEnabled)
+              TextField(
+                controller: code,
+                decoration: const InputDecoration(
+                  labelText: 'Code from your authenticator app',
+                ),
+              ),
+            TextField(
+              controller: typed,
+              decoration: const InputDecoration(labelText: 'Type DELETE'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(
+            'Delete',
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  final passwordText = password.text;
+  final codeText = code.text.trim();
+  final typedText = typed.text.trim();
+  // Not disposed here: the dialog may still be animating closed.
+  if (confirmed != true || !context.mounted) return;
+  if (typedText != 'DELETE') {
+    JolToast.show(context, 'Type DELETE in capitals to confirm.');
+    return;
+  }
+
+  try {
+    await ref
+        .read(privacyRepositoryProvider)
+        .deleteAccount(
+          password: passwordText,
+          twoFactorCode: codeText.isEmpty ? null : codeText,
+        );
+    await ref.read(authRepositoryProvider).logout();
+    ref.read(attendeeControllerProvider.notifier).resetSession();
+    ref.invalidate(currentUserProvider);
+    if (!context.mounted) return;
+    JolToast.show(context, 'Your account has been deleted.');
+    context.go('/welcome');
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
   }
 }

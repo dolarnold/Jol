@@ -14,13 +14,29 @@ class TierDraft {
     required this.capacity,
     this.description = '',
     this.maxPerOrder,
+    this.kind = 'single',
+    this.peoplePerTicket = 1,
+    this.units,
+    this.tableNames = const [],
   });
 
   final String name;
+
+  /// Per ticket; for a group deal or table, for the whole group.
   final int price;
+
+  /// People in total (for groups and tables: units × people).
   final int capacity;
   final String description;
   final int? maxPerOrder;
+
+  /// single, group (a deal for several people) or table.
+  final String kind;
+  final int peoplePerTicket;
+
+  /// How many groups or tables are for sale.
+  final int? units;
+  final List<String> tableNames;
 
   Map<String, Object> toJson() => {
     'name': name,
@@ -29,6 +45,10 @@ class TierDraft {
     'is_free': price <= 0 ? 1 : 0,
     'capacity': capacity,
     'max_per_order': ?maxPerOrder,
+    'kind': kind,
+    if (kind != 'single') 'people_per_ticket': peoplePerTicket,
+    if (kind != 'single' && units != null) 'units': units!,
+    if (kind == 'table' && tableNames.isNotEmpty) 'table_names': tableNames.join('\n'),
   };
 }
 
@@ -61,6 +81,7 @@ class EventDraft {
   const EventDraft({
     required this.title,
     required this.category,
+    this.categoryLabel,
     required this.start,
     required this.end,
     this.description = '',
@@ -85,6 +106,9 @@ class EventDraft {
 
   final String title;
   final String category;
+
+  /// For "Other" (general): what kind of event, e.g. "Book club".
+  final String? categoryLabel;
   final DateTime start;
   final DateTime end;
   final String description;
@@ -116,6 +140,7 @@ class EventDraft {
     'title': title,
     'type': 'casual',
     'category': category,
+    'category_label': category == 'general' ? categoryLabel : null,
     'start_time': start.toUtc().toIso8601String(),
     'end_time': end.toUtc().toIso8601String(),
     'description': description.isEmpty ? null : description,
@@ -229,6 +254,35 @@ class HostingRepository {
       '/events/${Uri.encodeComponent(eventId)}',
       data: {'status': 'published'},
     );
+  });
+
+  /// Copies the event to later dates ('weekly', 'fortnightly' or 'monthly').
+  /// Returns how many dates were added.
+  Future<int> repeatEvent(
+    String eventId, {
+    required String frequency,
+    required int count,
+    required bool publish,
+  }) => _call(() async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/events/${Uri.encodeComponent(eventId)}/repeat',
+      data: {'frequency': frequency, 'count': count, 'publish': publish},
+    );
+    final events = (response.data?['data'] as Map?)?['events'];
+    return events is List ? events.length : count;
+  });
+
+  /// Sends a message to the event's guests (app inbox, push and email).
+  Future<String> messageGuests(
+    String eventId, {
+    required String subject,
+    required String body,
+  }) => _call(() async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/events/${Uri.encodeComponent(eventId)}/broadcasts',
+      data: {'audience': 'everyone', 'subject': subject, 'body': body},
+    );
+    return response.data?['message'] as String? ?? 'Sending your message now.';
   });
 }
 

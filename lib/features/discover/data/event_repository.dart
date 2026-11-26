@@ -21,10 +21,34 @@ final topListProvider = FutureProvider<List<({JolEvent event, int rank, int atte
   (ref) => ref.watch(eventRepositoryProvider).fetchTopList(),
 );
 
+/// Categories, cities and poster styles hosts can pick, as the JOL team set
+/// them up: kind ('category', 'city', 'poster_style') → slug → label.
+final catalogProvider = FutureProvider<Map<String, Map<String, String>>>(
+  (ref) => ref.watch(eventRepositoryProvider).fetchCatalog(),
+);
+
 class EventRepository {
   const EventRepository(this._dio);
 
   final Dio _dio;
+
+  Future<Map<String, Map<String, String>>> fetchCatalog() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>('/catalog');
+      final data = response.data?['data'];
+      if (data is! Map) return const {};
+      return {
+        for (final entry in data.entries)
+          if (entry.value is List)
+            '${entry.key}': {
+              for (final item in entry.value as List)
+                if (item is Map) '${item['slug']}': '${item['label']}',
+            },
+      };
+    } on DioException catch (error) {
+      throw ApiException.fromDio(error);
+    }
+  }
 
   Future<List<JolEvent>> fetchEvents() async {
     try {

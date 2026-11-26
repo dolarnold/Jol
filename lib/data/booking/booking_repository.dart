@@ -17,6 +17,10 @@ class JolTicket {
     this.tierPrice = 0,
     this.event,
     this.scannedAt,
+    this.ticketPageUrl,
+    this.refundStatus,
+    this.tableName,
+    this.isGroupGuest = false,
   });
 
   factory JolTicket.fromApi(Map<String, dynamic> json) {
@@ -38,8 +42,20 @@ class JolTicket {
       scannedAt: scannedAt is String
           ? DateTime.tryParse(scannedAt)?.toLocal()
           : null,
+      ticketPageUrl: json['ticket_page_url'] as String?,
+      refundStatus: json['refund_request'] is Map
+          ? (json['refund_request'] as Map)['status'] as String?
+          : null,
+      tableName: json['table_name'] as String?,
+      isGroupGuest: json['lead_ticket_id'] != null,
     );
   }
+
+  /// The table, for a table booking.
+  final String? tableName;
+
+  /// One of the other tickets of a group deal or table (not the buyer's).
+  final bool isGroupGuest;
 
   final String id;
   final String code;
@@ -51,6 +67,12 @@ class JolTicket {
   final int tierPrice;
   final JolEvent? event;
   final DateTime? scannedAt;
+
+  /// Printable ticket page (QR code, save as PDF, add to calendar).
+  final String? ticketPageUrl;
+
+  /// pending, approved or declined when a refund was asked for.
+  final String? refundStatus;
 
   bool get isValid => status == 'valid';
   bool get isUsed => status == 'used';
@@ -83,6 +105,7 @@ class HostedEvent {
     required this.ticketsSold,
     required this.checkedIn,
     required this.ticketRevenue,
+    this.guestsCheckedIn = 0,
   });
 
   final JolEvent event;
@@ -91,8 +114,12 @@ class HostedEvent {
   final String role;
   final int goingCount;
   final int ticketsSold;
+  /// Tickets let in at the door.
   final int checkedIn;
   final double ticketRevenue;
+
+  /// RSVP guests let in from the door guest list (plus-ones included).
+  final int guestsCheckedIn;
 
   bool get isHost => role == 'host';
 }
@@ -232,66 +259,64 @@ class BookingRepository {
     return _list(response.data?['data']).map(JolTicket.fromApi).toList(growable: false);
   });
 
-  /// Buys [quantity] tickets one at a time (the API creates one ticket per
-  /// purchase). With the "fake" gateway the payment is completed through the
-  /// simulate-payment URL; any other gateway hands back its checkout page.
+  /// Buys [quantity] tickets in one purchase (one payment). With the "fake"
+  /// gateway the payment is completed through the simulate-payment URL;
+  /// Paystack hands back its checkout page, opened with [openCheckout].
   Future<PurchaseResult> purchaseTickets({
     required String eventId,
     required String tierId,
     required int quantity,
     required String guestName,
     required String guestPhone,
+    String? promoCode,
+    String? tableName,
+    bool useCredit = false,
     Future<void> Function(Uri checkoutUrl)? openCheckout,
   }) async {
-    var completed = 0;
-    var pending = 0;
-    String? lastError;
-    for (var index = 0; index < quantity; index++) {
-      try {
-        final response = await _dio.post<Map<String, dynamic>>(
-          '/events/${Uri.encodeComponent(eventId)}/purchase-ticket',
-          data: {
-            'ticket_tier_id': int.tryParse(tierId) ?? tierId,
-            'guest_name': guestName,
-            'guest_phone': guestPhone,
-          },
-        );
-        final data = response.data?['data'];
-        final payment = data is Map ? data['payment'] : null;
-        final checkoutUrl = data is Map ? data['checkout_url'] as String? : null;
-        final gateway = payment is Map ? payment['payment_gateway'] as String? : null;
+    // One request for all of them: one payment and one checkout.
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/events/${Uri.encodeComponent(eventId)}/purchase-ticket',
+        data: {
+          'ticket_tier_id': int.tryParse(tierId) ?? tierId,
+          'guest_name': guestName,
+          'guest_phone': guestPhone,
+          'quantity': quantity,
+          'promo_code': ?promoCode,
+          'table_name': ?tableName,
+          // Paid with JOL credit: no card, the tickets are valid straight away.
+          if (useCredit) 'use_credit': true,
+        },
+      );
+      final data = response.data?['data'];
+      final payment = data is Map ? data['payment'] : null;
+      final checkoutUrl = data is Map ? data['checkout_url'] as String? : null;
+      final gateway = payment is Map ? payment['payment_gateway'] as String? : null;
+      final ticket = data is Map ? data['ticket'] : null;
 
-        final ticket = data is Map ? data['ticket'] : null;
-        if (checkoutUrl == null) {
-          // Free tickets come back already valid, with no payment.
-          ticket is Map && ticket['status'] == 'valid' ? completed++ : pending++;
-        } else if (gateway == 'fake') {
-          final status = await _completeFakePayment(checkoutUrl);
-          status == 'completed' ? completed++ : pending++;
-        } else {
-          pending++;
-          await openCheckout?.call(Uri.parse(checkoutUrl));
-          break; // A real gateway checkout has to finish before buying more.
-        }
-      } on DioException catch (error) {
-        lastError = ApiException.fromDio(error).message;
-        if (completed == 0 && pending == 0) {
-          return PurchaseResult(
-            outcome: PurchaseOutcome.declined,
-            completed: 0,
-            requested: quantity,
-            message: lastError,
-          );
-        }
-        break;
+      var paid = false;
+      if (checkoutUrl == null || checkoutUrl.isEmpty) {
+        // Free or JOL credit: already valid, no payment page.
+        paid = ticket is Map && ticket['status'] == 'valid';
+      } else if (gateway == 'fake') {
+        paid = await _completeFakePayment(checkoutUrl) == 'completed';
+      } else {
+        // Paystack opens in the browser; the tickets turn valid once it's paid.
+        await openCheckout?.call(Uri.parse(checkoutUrl));
       }
+      return PurchaseResult(
+        outcome: paid ? PurchaseOutcome.success : PurchaseOutcome.pending,
+        completed: paid ? quantity : 0,
+        requested: quantity,
+      );
+    } on DioException catch (error) {
+      return PurchaseResult(
+        outcome: PurchaseOutcome.declined,
+        completed: 0,
+        requested: quantity,
+        message: ApiException.fromDio(error).message,
+      );
     }
-    return PurchaseResult(
-      outcome: completed > 0 ? PurchaseOutcome.success : PurchaseOutcome.pending,
-      completed: completed,
-      requested: quantity,
-      message: lastError,
-    );
   }
 
   Future<String> _completeFakePayment(String checkoutUrl) async {
@@ -325,6 +350,7 @@ class BookingRepository {
         ticketsSold: count('tickets_sold'),
         checkedIn: count('checked_in'),
         ticketRevenue: (stats['ticket_revenue'] as num?)?.toDouble() ?? 0,
+        guestsCheckedIn: count('guests_checked_in'),
       );
     }).toList(growable: false);
   });
@@ -458,7 +484,79 @@ class BookingRepository {
       );
     }
   }
+
+  // ---- Promo codes, waitlists, refunds, following, reviews ----
+
+  /// Checks a promo code. Returns the price with it applied.
+  Future<PromoQuote> checkPromo({
+    required String eventId,
+    required String tierId,
+    required String code,
+  }) => _call(() async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/events/${Uri.encodeComponent(eventId)}/promo-check',
+      data: {'ticket_tier_id': int.tryParse(tierId) ?? tierId, 'code': code},
+    );
+    final data = Map<String, dynamic>.from(response.data?['data'] as Map);
+    return PromoQuote(
+      code: '${data['code']}',
+      label: '${data['label']}',
+      amount: (data['amount'] as num).toDouble(),
+      discount: (data['discount'] as num).toDouble(),
+    );
+  });
+
+  Future<String> joinWaitlist(String eventId, String tierId) =>
+      _message(() => _dio.post<Map<String, dynamic>>(
+        '/events/${Uri.encodeComponent(eventId)}/waitlist',
+        data: {'ticket_tier_id': int.tryParse(tierId) ?? tierId},
+      ));
+
+  Future<String> requestRefund(String ticketId, String reason) =>
+      _message(() => _dio.post<Map<String, dynamic>>(
+        '/tickets/${Uri.encodeComponent(ticketId)}/refund-request',
+        data: {'reason': reason},
+      ));
+
+  /// Asks the JOL team to step in on a payment (cancelled event, not let in,
+  /// charged twice…). While it's open, the host isn't paid for that sale.
+  Future<String> reportPaymentProblem(
+    String ticketId, {
+    required String reason,
+    required String details,
+  }) =>
+      _message(() => _dio.post<Map<String, dynamic>>(
+        '/tickets/${Uri.encodeComponent(ticketId)}/dispute',
+        data: {'reason': reason, 'details': details},
+      ));
+
+  Future<String> setFollowing(String hostId, {required bool follow}) =>
+      _message(() => follow
+          ? _dio.post<Map<String, dynamic>>('/hosts/$hostId/follow')
+          : _dio.delete<Map<String, dynamic>>('/hosts/$hostId/follow'));
+
+  Future<String> rateEvent(String eventId, int rating, String? comment) =>
+      _message(() => _dio.post<Map<String, dynamic>>(
+        '/events/${Uri.encodeComponent(eventId)}/reviews',
+        data: {
+          'rating': rating,
+          if (comment != null && comment.trim().isNotEmpty) 'comment': comment.trim(),
+        },
+      ));
+
+  Future<String> _message(
+    Future<Response<Map<String, dynamic>>> Function() request,
+  ) => _call(() async {
+    final response = await request();
+    return '${response.data?['message'] ?? 'Done.'}';
+  });
 }
+
+/// The last checkout, for the payment result screen.
+final lastPurchaseProvider =
+    NotifierProvider<LastPurchaseNotifier, PurchaseResult?>(
+      LastPurchaseNotifier.new,
+    );
 
 /// Remembers the last checkout so the payment result screen can describe it.
 class LastPurchaseNotifier extends Notifier<PurchaseResult?> {
@@ -466,9 +564,22 @@ class LastPurchaseNotifier extends Notifier<PurchaseResult?> {
   PurchaseResult? build() => null;
 
   void set(PurchaseResult? result) => state = result;
+
 }
 
-final lastPurchaseProvider =
-    NotifierProvider<LastPurchaseNotifier, PurchaseResult?>(
-      LastPurchaseNotifier.new,
-    );
+@immutable
+class PromoQuote {
+  const PromoQuote({
+    required this.code,
+    required this.label,
+    required this.amount,
+    required this.discount,
+  });
+
+  final String code;
+  final String label;
+
+  /// Price of one ticket with the code applied.
+  final double amount;
+  final double discount;
+}

@@ -38,11 +38,37 @@ class _TierFields {
   final TextEditingController name;
   final description = TextEditingController();
   final price = TextEditingController();
+
+  /// Single tickets: how many. Groups and tables: how many groups/tables.
   final capacity = TextEditingController();
   final maxPerOrder = TextEditingController();
+  final people = TextEditingController();
 
+  /// Tables: their names, one per line or separated by commas (optional).
+  final tableNames = TextEditingController();
+
+  /// single, group or table.
+  var kind = 'single';
+
+  bool get isBundle => kind != 'single';
   int get priceValue => int.tryParse(price.text.trim()) ?? 0;
-  int get capacityValue => int.tryParse(capacity.text.trim()) ?? 0;
+  int get peopleValue => isBundle ? (int.tryParse(people.text.trim()) ?? 0) : 1;
+  List<String> get tableNameList => kind == 'table'
+      ? tableNames.text
+            .split(RegExp(r'[\n,]'))
+            .map((name) => name.trim())
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList()
+      : const [];
+
+  /// What's for sale: tickets, groups or tables.
+  int get unitsValue => tableNameList.isNotEmpty
+      ? tableNameList.length
+      : int.tryParse(capacity.text.trim()) ?? 0;
+
+  /// People in total.
+  int get capacityValue => unitsValue * (peopleValue < 1 ? 1 : peopleValue);
 
   TierDraft toDraft() => TierDraft(
     name: name.text.trim(),
@@ -50,10 +76,14 @@ class _TierFields {
     price: priceValue,
     capacity: capacityValue,
     maxPerOrder: int.tryParse(maxPerOrder.text.trim()),
+    kind: kind,
+    peoplePerTicket: peopleValue,
+    units: isBundle ? unitsValue : null,
+    tableNames: tableNameList,
   );
 
   void dispose() {
-    for (final controller in [name, description, price, capacity, maxPerOrder]) {
+    for (final controller in [name, description, price, capacity, maxPerOrder, people, tableNames]) {
       controller.dispose();
     }
   }
@@ -86,6 +116,7 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
   final _fundDescription = TextEditingController();
   final _fundSuggested = TextEditingController();
   final _fundTarget = TextEditingController();
+  final _categoryLabel = TextEditingController();
   final List<_TierFields> _tiers = [];
 
   var _category = _categories.first;
@@ -136,7 +167,11 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
       return;
     }
     _title.text = event.title;
-    if (_categories.contains(event.category)) _category = event.category;
+    if (event.category.isNotEmpty) _category = event.category;
+    final label = event.categoryLabel;
+    if (event.category == 'general' && label != null && label != 'Other') {
+      _categoryLabel.text = label;
+    }
     final starts = event.startsAt ?? event.date;
     final ends = event.endsAt ?? starts.add(const Duration(hours: 3));
     _date = DateTime(starts.year, starts.month, starts.day);
@@ -195,6 +230,7 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
       _fundDescription,
       _fundSuggested,
       _fundTarget,
+      _categoryLabel,
     ]) {
       controller.dispose();
     }
@@ -241,7 +277,7 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
       ) +
       _tiers.fold<int>(
         0,
-        (sum, tier) => sum + tier.priceValue * tier.capacityValue,
+        (sum, tier) => sum + tier.priceValue * tier.unitsValue,
       );
 
   /// Ticket types with nothing typed in are ignored.
@@ -250,12 +286,16 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
         (tier) =>
             tier.name.text.trim().isNotEmpty ||
             tier.price.text.trim().isNotEmpty ||
-            tier.capacity.text.trim().isNotEmpty,
+            tier.capacity.text.trim().isNotEmpty ||
+            tier.tableNames.text.trim().isNotEmpty,
       )
       .toList();
 
   String? _validate({required bool publishing}) {
     if (_title.text.trim().isEmpty) return 'Give your event a name.';
+    if (_category == 'general' && _categoryLabel.text.trim().isEmpty) {
+      return 'Say what kind of event it is.';
+    }
     if (_date == null) return 'Pick a date.';
     if (!_startAt.isAfter(DateTime.now())) {
       return 'The start time must be in the future.';
@@ -272,10 +312,26 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
         if (tier.name.text.trim().isEmpty) return 'Name each ticket type.';
         final label = tier.name.text.trim();
         if (tier.priceValue < 1) return 'Enter a price for $label.';
-        if (_maxPrice != null && tier.priceValue > _maxPrice!) {
-          return 'Tickets can be at most R$_maxPrice.';
+        // Limits are per person: a group of 4 for R400 is R100 each.
+        final perPerson = tier.priceValue / (tier.peopleValue < 1 ? 1 : tier.peopleValue);
+        if (_maxPrice != null && perPerson > _maxPrice!) {
+          return tier.isBundle
+              ? 'That’s more than R$_maxPrice a person.'
+              : 'Tickets can be at most R$_maxPrice.';
         }
-        if (tier.capacityValue < 1) return 'Enter how many $label tickets.';
+        if (tier.kind == 'group' && tier.peopleValue < 2) {
+          return 'A group deal is for at least 2 people ($label).';
+        }
+        if (tier.kind == 'table' && tier.peopleValue < 1) {
+          return 'Say how many people each table is for ($label).';
+        }
+        if (tier.unitsValue < 1) {
+          return switch (tier.kind) {
+            'group' => 'Enter how many $label groups you’re selling.',
+            'table' => 'Enter how many tables, or their names ($label).',
+            _ => 'Enter how many $label tickets.',
+          };
+        }
         final max = tier.maxPerOrder.text.trim();
         if (max.isNotEmpty) {
           final value = int.tryParse(max);
@@ -343,6 +399,7 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
     return EventDraft(
       title: _title.text.trim(),
       category: _category,
+      categoryLabel: _categoryLabel.text.trim(),
       start: _startAt,
       end: _endAt,
       description: _description.text.trim(),
@@ -557,6 +614,22 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
   Widget build(BuildContext context) {
     final tokens = JolTokens.of(context);
     final theme = Theme.of(context);
+    // Categories and poster styles as the JOL team set them up (Admin →
+    // Categories & cities); the launch set until they load.
+    final catalog = ref.watch(catalogProvider).value;
+    final categories = <String, String>{
+      ...(catalog?['category'] ??
+          {for (final category in _categories) category: category}),
+    };
+    if (!categories.containsKey(_category)) categories[_category] = _category;
+    final posterLabels = <String, String>{
+      for (final entry
+          in (catalog?['poster_style'] ?? _posterLabels).entries)
+        if (_posterLabels.containsKey(entry.key)) entry.key: entry.value,
+    };
+    if (_posterStyle != null && !posterLabels.containsKey(_posterStyle)) {
+      posterLabels[_posterStyle!] = _posterLabels[_posterStyle] ?? _posterStyle!;
+    }
     final isDraftOrNew = !_isEdit || (_existing?.isDraft ?? false);
     final hasPhoto = _cover != null || _existingCoverUrl != null;
     final previewDate = _date ?? DateTime.now();
@@ -647,7 +720,7 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
                   selected: _posterStyle == null,
                   onSelected: (_) => setState(() => _posterStyle = null),
                 ),
-                for (final entry in _posterLabels.entries)
+                for (final entry in posterLabels.entries)
                   ChoiceChip(
                     label: Text(entry.value),
                     selected: _posterStyle == entry.key,
@@ -671,11 +744,26 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
             initialValue: _category,
             decoration: const InputDecoration(labelText: 'Category'),
             items: [
-              for (final category in _categories)
-                DropdownMenuItem(value: category, child: Text(category)),
+              for (final category in categories.entries)
+                DropdownMenuItem(
+                  value: category.key,
+                  child: Text(category.value),
+                ),
             ],
             onChanged: (value) => setState(() => _category = value ?? _category),
           ),
+          if (_category == 'general') ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _categoryLabel,
+              maxLength: 50,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'What kind of event?',
+                hintText: 'e.g. Book club, comedy night',
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           TextField(
             controller: _description,
@@ -836,6 +924,7 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
           child: JolListRow(
             title: tier.name,
             subtitle:
+                '${tier.isBundle ? '${tier.bundleLabel} · ' : ''}'
                 '${formatZar(tier.price)} · '
                 '${tier.remaining == null ? 'no limit' : '${tier.remaining} left'}'
                 '${tier.maxPerOrder == null ? '' : ' · max ${tier.maxPerOrder} each'}',
@@ -873,6 +962,33 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
                 ],
               ),
               const SizedBox(height: 10),
+              SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: 'single', label: Text('Ticket')),
+                  ButtonSegment(value: 'group', label: Text('Group deal')),
+                  ButtonSegment(value: 'table', label: Text('Table')),
+                ],
+                selected: {tier.kind},
+                onSelectionChanged: (selection) => setState(() {
+                  tier.kind = selection.first;
+                  if (tier.isBundle && tier.people.text.trim().isEmpty) {
+                    tier.people.text = tier.kind == 'table' ? '6' : '4';
+                  }
+                }),
+              ),
+              if (tier.isBundle) ...[
+                const SizedBox(height: 6),
+                Text(
+                  tier.kind == 'group'
+                      ? 'One purchase for the whole group (e.g. 4 for R400). '
+                            'Everyone gets their own ticket.'
+                      : 'Guests book a whole table and pick which one. '
+                            'Everyone at it gets their own ticket.',
+                  style: theme.textTheme.bodySmall?.copyWith(color: tokens.muted),
+                ),
+              ],
+              const SizedBox(height: 10),
               TextField(
                 controller: tier.description,
                 decoration: const InputDecoration(
@@ -889,19 +1005,42 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
                       keyboardType: TextInputType.number,
                       onChanged: (_) => setState(() {}),
                       decoration: InputDecoration(
-                        labelText: 'Price',
+                        labelText: switch (tier.kind) {
+                          'group' => 'Price per group',
+                          'table' => 'Price per table',
+                          _ => 'Price',
+                        },
                         prefixText: 'R ',
                         helperText: _maxPrice == null ? null : 'Up to R$_maxPrice',
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
+                  if (tier.isBundle) ...[
+                    Expanded(
+                      child: TextField(
+                        controller: tier.people,
+                        keyboardType: TextInputType.number,
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          labelText: tier.kind == 'table' ? 'Seats' : 'People',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
                   Expanded(
                     child: TextField(
                       controller: tier.capacity,
                       keyboardType: TextInputType.number,
                       onChanged: (_) => setState(() {}),
-                      decoration: const InputDecoration(labelText: 'Tickets'),
+                      decoration: InputDecoration(
+                        labelText: switch (tier.kind) {
+                          'group' => 'Groups',
+                          'table' => 'Tables',
+                          _ => 'Tickets',
+                        },
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -917,6 +1056,20 @@ class _EventFormScreenState extends ConsumerState<EventFormScreen> {
                   ),
                 ],
               ),
+              if (tier.kind == 'table') ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: tier.tableNames,
+                  minLines: 1,
+                  maxLines: 4,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'Table names (optional)',
+                    hintText: 'e.g. Booth 1, Booth 2, VIP',
+                    helperText: 'Guests pick one. Leave empty to number them.',
+                  ),
+                ),
+              ],
             ],
           ),
         ),

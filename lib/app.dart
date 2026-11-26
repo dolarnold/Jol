@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'data/api/api_client.dart';
+import 'data/api/app_version.dart';
 import 'features/booking/screens/attendee_booking_screens.dart';
 import 'features/discover/screens/attendee_discovery_screens.dart';
+import 'features/door/door_screen.dart';
 import 'features/profile/screens/attendee_profile_screens.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/signup_screen.dart';
@@ -46,6 +49,12 @@ GoRouter _createRouter() {
         builder: (context, state) =>
             EventScreen(eventId: state.pathParameters['eventId']!),
       ),
+      // Shared event links (https://…/e/CODE) land here when the app is installed.
+      GoRoute(
+        path: '/e/:code',
+        builder: (context, state) =>
+            EventScreen(eventId: state.pathParameters['code']!),
+      ),
       GoRoute(
         path: '/invite',
         builder: (context, state) => const InviteCodeScreen(),
@@ -87,6 +96,12 @@ GoRouter _createRouter() {
       GoRoute(
         path: '/staff-request',
         builder: (context, state) => const StaffRequestScreen(),
+      ),
+      // An event's door: scan tickets, guest list, door sales (works without signal).
+      GoRoute(
+        path: '/door/:eventId',
+        builder: (context, state) =>
+            DoorScreen(eventId: state.pathParameters['eventId']!),
       ),
       GoRoute(
         path: '/staff',
@@ -171,6 +186,10 @@ class _JolAppState extends ConsumerState<JolApp> {
   void initState() {
     super.initState();
     _router = _createRouter();
+    // Is this version still supported, and is there a newer one?
+    Future.microtask(
+      () => ref.read(appUpdateProvider.notifier).check(ref.read(apiClientProvider)),
+    );
   }
 
   @override
@@ -188,6 +207,9 @@ class _JolAppState extends ConsumerState<JolApp> {
       darkTheme: JolTheme.dark,
       themeMode: ref.watch(jolThemeModeProvider),
       routerConfig: _router,
+      // "Update JOL" screen, or a small note when a newer version is out.
+      builder: (context, child) =>
+          AppUpdateGate(child: child ?? const SizedBox.shrink()),
     );
   }
 }
