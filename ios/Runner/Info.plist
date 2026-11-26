@@ -26,6 +26,23 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>JOL uses your photos to add a cover image to events you host.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>JOL uses the camera to scan tickets at the door and to take cover photos for events you host.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>JOL uses your location to show events near you and to pin the venue of events you host.</string>
+	<key>FlutterDeepLinkingEnabled</key>
+	<true/>
+	<key>GMSApiKey</key>
+	<string>$(GOOGLE_MAPS_API_KEY)</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>JOL connects to your local development server while testing.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

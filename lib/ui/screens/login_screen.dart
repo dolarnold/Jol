@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../data/api/api_client.dart';
 import '../../data/auth/auth_repository.dart';
+import '../../data/auth/privacy_repository.dart';
+import '../../data/auth/profile_repository.dart';
 import '../theme/jol_theme.dart';
 import '../widgets/jol_button.dart';
 import '../widgets/jol_theme_button.dart';
@@ -17,16 +20,21 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
+  var _hidePassword = true;
   final _formKey = GlobalKey<FormState>();
   final _loginController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _codeController = TextEditingController();
   var _isSubmitting = false;
+  // Set once the server says this account uses two-step login.
+  var _needsCode = false;
   String? _errorMessage;
 
   @override
   void dispose() {
     _loginController.dispose();
     _passwordController.dispose();
+    _codeController.dispose();
     super.dispose();
   }
 
@@ -43,11 +51,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           .login(
             login: _normalizeLogin(_loginController.text),
             password: _passwordController.text,
+            twoFactorCode: _needsCode ? _codeController.text.trim() : null,
           );
       if (!mounted) return;
+      ref.invalidate(currentUserProvider);
       context.go('/discover');
     } on ApiException catch (error) {
-      if (mounted) setState(() => _errorMessage = error.message);
+      if (!mounted) return;
+      setState(() {
+        if (error.code == 'TWO_FACTOR_REQUIRED') {
+          // Password was right: show the code field.
+          _needsCode = true;
+          _errorMessage = null;
+        } else {
+          _errorMessage = error.message;
+        }
+      });
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -114,15 +133,52 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       TextFormField(
                         key: const ValueKey('login-password'),
                         controller: _passwordController,
-                        obscureText: true,
+                        obscureText: _hidePassword,
+                        autofillHints: const [AutofillHints.password],
                         textInputAction: TextInputAction.done,
                         validator: (value) => (value ?? '').isEmpty
                             ? 'Enter your password.'
                             : null,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Password',
+                          suffixIcon: IconButton(
+                            tooltip: _hidePassword ? 'Show password' : 'Hide password',
+                            icon: Icon(_hidePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                            onPressed: () => setState(() => _hidePassword = !_hidePassword),
+                          ),
                         ),
                       ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          // Reset by email on the website; then sign in here.
+                          onPressed: () => launchUrl(
+                            Uri.parse('$siteUrl/forgot-password'),
+                            mode: LaunchMode.externalApplication,
+                          ),
+                          child: const Text('Forgot password?'),
+                        ),
+                      ),
+                      if (_needsCode) ...[
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          key: const ValueKey('login-two-factor'),
+                          controller: _codeController,
+                          autofocus: true,
+                          keyboardType: TextInputType.text,
+                          autofillHints: const [AutofillHints.oneTimeCode],
+                          textInputAction: TextInputAction.done,
+                          onFieldSubmitted: (_) => _continue(),
+                          validator: (value) => (value ?? '').trim().length < 6
+                              ? 'Enter the 6-digit code or a recovery code.'
+                              : null,
+                          decoration: const InputDecoration(
+                            labelText: 'Code from your authenticator app',
+                            helperText:
+                                'Lost your phone? Enter a recovery code instead.',
+                          ),
+                        ),
+                      ],
                       if (_errorMessage != null) ...[
                         const SizedBox(height: 16),
                         Text(

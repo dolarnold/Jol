@@ -21,7 +21,7 @@ Widget _testApp() {
 
 Future<void> _launchToWelcome(WidgetTester tester) async {
   await tester.pumpWidget(_testApp());
-  await tester.pump(const Duration(milliseconds: 1500));
+  await tester.pump(const Duration(milliseconds: 2500));
   await tester.pumpAndSettle();
 }
 
@@ -47,10 +47,15 @@ class _TestAuthRepository extends AuthRepository {
     required String email,
     required String phone,
     required String password,
+    bool marketingOptIn = false,
   }) async {}
 
   @override
-  Future<void> login({required String login, required String password}) async {
+  Future<void> login({
+    required String login,
+    required String password,
+    String? twoFactorCode,
+  }) async {
     throw const ApiException('Invalid credentials.');
   }
 }
@@ -61,13 +66,12 @@ void main() {
   ) async {
     await tester.pumpWidget(_testApp());
 
-    expect(find.text('J O L'), findsOneWidget);
-    expect(
-      Theme.of(tester.element(find.text('J O L'))).brightness,
-      Brightness.dark,
-    );
+    // The live splash (animated pin), then the welcome screen.
+    final splashImage = find.byKey(const ValueKey('startup-splash'));
+    expect(splashImage, findsOneWidget);
+    expect(Theme.of(tester.element(splashImage)).brightness, Brightness.dark);
 
-    await tester.pump(const Duration(milliseconds: 1500));
+    await tester.pump(const Duration(milliseconds: 2500));
     await tester.pumpAndSettle();
     expect(find.text('find the jol. host the jol.'), findsOneWidget);
 

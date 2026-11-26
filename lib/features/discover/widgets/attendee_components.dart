@@ -103,12 +103,16 @@ class AttendeePosterCard extends StatelessWidget {
     required this.onTap,
     this.compact = false,
     this.trailing,
+    this.distance,
   });
 
   final JolEvent event;
   final VoidCallback onTap;
   final bool compact;
   final Widget? trailing;
+
+  /// e.g. "2.4 km", shown when Discover is sorted by distance.
+  final String? distance;
 
   @override
   Widget build(BuildContext context) {
@@ -131,6 +135,7 @@ class AttendeePosterCard extends StatelessWidget {
                 title: event.title,
                 area: event.area,
                 dateStamp: eventDateStamp(event.date),
+                imageUrl: event.coverImageUrl,
                 size: Size(height * .77, height),
               ),
               const SizedBox(width: 14),
@@ -159,7 +164,11 @@ class AttendeePosterCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '${event.startTime} · ${event.area}',
+                        [
+                          event.startTime,
+                          event.area,
+                          ?distance,
+                        ].join(' · '),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(

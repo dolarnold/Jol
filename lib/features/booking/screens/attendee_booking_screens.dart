@@ -6,8 +6,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-import '../../../data/payment/payment_service.dart';
+import '../../../data/api/api_client.dart';
+import '../../../data/auth/profile_repository.dart';
+import '../../../data/booking/booking_repository.dart';
+import '../../../features/discover/data/event_repository.dart';
 import '../../../features/attendee/state/attendee_controller.dart';
 import '../../../features/discover/models/jol_event.dart';
 import '../../../features/discover/widgets/attendee_components.dart';
@@ -19,7 +23,7 @@ import '../../../ui/widgets/jol_list_row.dart';
 import '../../../ui/widgets/jol_segmented.dart';
 import '../../../ui/widgets/jol_sheet.dart';
 import '../../../ui/widgets/jol_toast.dart';
-import '../../auth/student_email_validator.dart';
+import '../../profile/growth_screens.dart';
 
 class TicketSelectionScreen extends ConsumerStatefulWidget {
   const TicketSelectionScreen({super.key, required this.eventId});
@@ -35,9 +39,8 @@ class _TicketSelectionScreenState extends ConsumerState<TicketSelectionScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final event = findAttendeeEvent(widget.eventId);
-      if (event != null) {
+    ref.read(attendeeEventProvider(widget.eventId).future).then((event) {
+      if (mounted && event.tiers.isNotEmpty) {
         ref
             .read(attendeeControllerProvider.notifier)
             .setEvent(
@@ -50,13 +53,20 @@ class _TicketSelectionScreenState extends ConsumerState<TicketSelectionScreen> {
                   .id,
             );
       }
-    });
+    }).ignore();
   }
 
   @override
   Widget build(BuildContext context) {
-    final event = findAttendeeEvent(widget.eventId);
-    if (event == null || event.tiers.isEmpty) {
+    final eventResult = ref.watch(attendeeEventProvider(widget.eventId));
+    final gate = _eventGate(
+      eventResult,
+      title: 'Tickets unavailable',
+      message: 'This event could not be found.',
+    );
+    if (gate != null) return gate;
+    final event = eventResult.requireValue;
+    if (event.tiers.isEmpty) {
       return Scaffold(
         appBar: AppBar(),
         body: const AttendeeEmptyState(
@@ -76,9 +86,11 @@ class _TicketSelectionScreenState extends ConsumerState<TicketSelectionScreen> {
         orElse: () => event.tiers.first,
       ),
     );
-    final limit = selectedTier.remaining == null
-        ? 6
-        : selectedTier.remaining!.clamp(1, 6);
+    final limit = [
+      6,
+      ?selectedTier.remaining,
+      ?selectedTier.maxPerOrder,
+    ].reduce((a, b) => a < b ? a : b).clamp(1, 6);
 
     return Scaffold(
       appBar: AppBar(title: const Text('choose tickets')),
@@ -123,13 +135,48 @@ class _TicketSelectionScreenState extends ConsumerState<TicketSelectionScreen> {
                 ],
               ),
             ),
+          if (selectedTier.isTable && selectedTier.freeTables.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String?>(
+              // Rebuilt when the tier changes, so the choice starts fresh.
+              key: ValueKey('table-${selectedTier.id}'),
+              initialValue:
+                  selectedTier.freeTables.contains(state.selectedTable)
+                  ? state.selectedTable
+                  : null,
+              decoration: const InputDecoration(labelText: 'Table'),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Any free table'),
+                ),
+                for (final table in selectedTier.freeTables)
+                  DropdownMenuItem<String?>(value: table, child: Text(table)),
+              ],
+              onChanged: controller.selectTable,
+            ),
+          ],
+          if (selectedTier.isBundle) ...[
+            const SizedBox(height: 8),
+            Text(
+              'The price is for the whole ${selectedTier.unitName}. You get '
+              '${selectedTier.peoplePerTicket} tickets: send one to each '
+              'friend from Tickets so they have their own QR code.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: tokens.muted),
+            ),
+          ],
           const SizedBox(height: 18),
           JolCard(
             child: Row(
               children: [
                 Expanded(
                   child: Text(
-                    'Quantity',
+                    selectedTier.isTable
+                        ? 'Tables'
+                        : selectedTier.isBundle
+                        ? 'Groups'
+                        : 'Quantity',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
@@ -155,6 +202,8 @@ class _TicketSelectionScreenState extends ConsumerState<TicketSelectionScreen> {
         child: JolButton(
           label: selectedTier.isStudent && !state.isStudentVerified
               ? 'Verify to continue'
+              : selectedTier.price == 0
+              ? 'Continue · free'
               : 'Continue · ${formatZar(selectedTier.price * state.quantity.clamp(1, limit))}',
           expanded: true,
           variant: JolButtonVariant.purchase,
@@ -212,6 +261,12 @@ class _TierTile extends StatelessWidget {
                             : null,
                       ),
                     ),
+                    if (tier.isBundle)
+                      Text(
+                        '${tier.bundleLabel} · everyone gets a ticket',
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: tokens.muted),
+                      ),
                     if (tier.description.isNotEmpty)
                       Text(
                         tier.description,
@@ -220,7 +275,9 @@ class _TierTile extends StatelessWidget {
                       ),
                     if (tier.remaining != null)
                       Text(
-                        '${tier.remaining} left',
+                        tier.isBundle
+                            ? '${tier.remaining} ${tier.unitName}s left'
+                            : '${tier.remaining} left',
                         style: Theme.of(context).textTheme.bodySmall
                             ?.copyWith(color: tokens.muted),
                       ),
@@ -291,6 +348,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   Timer? _timer;
   var _secondsRemaining = 8 * 60;
   var _isPaying = false;
+  PromoQuote? _promo;
 
   @override
   void initState() {
@@ -310,23 +368,26 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final event = findAttendeeEvent(widget.eventId);
-    if (event == null) {
-      return Scaffold(
-        appBar: AppBar(),
-        body: const AttendeeEmptyState(
-          title: 'Checkout unavailable',
-          message: 'This event could not be found.',
-        ),
-      );
-    }
+    final eventResult = ref.watch(attendeeEventProvider(widget.eventId));
+    final gate = _eventGate(
+      eventResult,
+      title: 'Checkout unavailable',
+      message: 'This event could not be found.',
+    );
+    if (gate != null) return gate;
+    final event = eventResult.requireValue;
     final state = ref.watch(attendeeControllerProvider);
     final tokens = JolTokens.of(context);
     final tier = event.tiers.firstWhere(
       (item) => item.id == state.selectedTierId,
       orElse: () => event.tiers.first,
     );
-    final total = tier.price * state.quantity;
+    final total = _promo == null
+        ? tier.price * state.quantity
+        : (_promo!.amount * state.quantity).round();
+    // JOL credit (gift cards, invites) can pay when it covers the whole order.
+    final credit = ref.watch(creditWalletProvider).value?.balance ?? 0;
+    final canUseCredit = total > 0 && credit >= total;
     final minutes = (_secondsRemaining ~/ 60).toString().padLeft(2, '0');
     final seconds = (_secondsRemaining % 60).toString().padLeft(2, '0');
 
@@ -361,6 +422,23 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                   subtitle: '${event.title} · ${state.quantity} ticket(s)',
                   trailing: Text(formatZar(total)),
                 ),
+                if (tier.price > 0) ...[
+                  const Divider(height: 18),
+                  JolListRow(
+                    title: _promo == null
+                        ? 'Have a promo code?'
+                        : 'Code ${_promo!.code} · ${_promo!.label}',
+                    subtitle: _promo == null
+                        ? null
+                        : 'You save ${formatZar((_promo!.discount * state.quantity).round())}',
+                    trailing: Icon(
+                      _promo == null ? Icons.local_offer_outlined : Icons.close,
+                    ),
+                    onTap: _promo == null
+                        ? () => _enterPromo(event, tier)
+                        : () => setState(() => _promo = null),
+                  ),
+                ],
                 const Divider(height: 18),
                 JolListRow(
                   title: 'Total',
@@ -377,7 +455,12 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           JolCard(
             child: Column(
               children: [
-                for (final method in ['Card', 'Instant EFT', 'Mobile payment'])
+                for (final method in [
+                  'Card',
+                  'Instant EFT',
+                  'Mobile payment',
+                  if (canUseCredit) 'JOL credit',
+                ])
                   Semantics(
                     button: true,
                     selected: state.paymentMethod == method,
@@ -407,7 +490,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           ),
           const SizedBox(height: 14),
           Text(
-            'Payment processing is a prototype. No charge will be made.',
+            'Your tickets appear in Tickets as soon as payment is confirmed.',
             style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: tokens.muted),
           ),
@@ -416,7 +499,11 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 12),
         child: JolButton(
-          label: _isPaying ? 'Processing…' : 'Pay ${formatZar(total)}',
+          label: _isPaying
+              ? 'Processing…'
+              : total == 0
+              ? 'Get free tickets'
+              : 'Pay ${formatZar(total)}',
           expanded: true,
           variant: JolButtonVariant.purchase,
           onPressed: _isPaying || _secondsRemaining == 0
@@ -430,13 +517,92 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   Future<void> _pay(JolEvent event, int total) async {
     setState(() => _isPaying = true);
     final state = ref.read(attendeeControllerProvider);
-    final outcome = await ref
-        .read(paymentServiceProvider)
-        .pay(amount: total, method: state.paymentMethod);
+    final tier = event.tiers.firstWhere(
+      (item) => item.id == state.selectedTierId,
+      orElse: () => event.tiers.first,
+    );
+    PurchaseResult result;
+    try {
+      final user = await ref.read(currentUserProvider.future);
+      final phone = user.phone;
+      if (phone == null || phone.isEmpty) {
+        throw const ApiException(
+          'Add a mobile number to your account before buying tickets.',
+        );
+      }
+      result = await ref
+          .read(bookingRepositoryProvider)
+          .purchaseTickets(
+            eventId: event.id,
+            tierId: tier.id,
+            quantity: state.quantity,
+            guestName: user.name,
+            guestPhone: phone,
+            promoCode: _promo?.code,
+            tableName: state.selectedTable,
+            useCredit: state.paymentMethod == 'JOL credit',
+            openCheckout: (url) =>
+                launchUrl(url, mode: LaunchMode.externalApplication),
+          );
+    } on ApiException catch (error) {
+      result = PurchaseResult(
+        outcome: PurchaseOutcome.declined,
+        completed: 0,
+        requested: state.quantity,
+        message: error.message,
+      );
+    }
     if (!mounted) return;
-    ref.read(attendeeControllerProvider.notifier).setPaymentOutcome(outcome);
+    ref.read(lastPurchaseProvider.notifier).set(result);
+    ref
+        .read(attendeeControllerProvider.notifier)
+        .setPaymentOutcome(switch (result.outcome) {
+          PurchaseOutcome.success => MockPaymentOutcome.success,
+          PurchaseOutcome.pending => MockPaymentOutcome.pending,
+          PurchaseOutcome.declined => MockPaymentOutcome.declined,
+        });
+    ref.invalidate(myTicketsProvider);
+    ref.invalidate(attendeeEventProvider); // every copy, incl. one opened by link code
     setState(() => _isPaying = false);
     context.go('/payment-result/${event.id}');
+  }
+
+  Future<void> _enterPromo(JolEvent event, JolTicketTier tier) async {
+    final controller = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Promo code'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(hintText: 'e.g. EARLY20'),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+    if (code == null || code.trim().isEmpty || !mounted) return;
+    try {
+      final quote = await ref
+          .read(bookingRepositoryProvider)
+          .checkPromo(eventId: event.id, tierId: tier.id, code: code.trim());
+      if (!mounted) return;
+      setState(() => _promo = quote);
+      JolToast.show(context, 'Code applied.');
+    } on ApiException catch (error) {
+      if (mounted) JolToast.show(context, error.message);
+    }
   }
 }
 
@@ -447,32 +613,38 @@ class PaymentResultScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final event = findAttendeeEvent(eventId);
+    final eventResult = ref.watch(attendeeEventProvider(eventId));
     final state = ref.watch(attendeeControllerProvider);
+    final purchase = ref.watch(lastPurchaseProvider);
     final tokens = JolTokens.of(context);
-    if (event == null) {
-      return Scaffold(
-        body: const AttendeeEmptyState(
-          title: 'Order not found',
-          message: 'Return to Discover to choose an event.',
-        ),
-      );
-    }
+    final gate = _eventGate(
+      eventResult,
+      title: 'Order not found',
+      message: 'Return to Discover to choose an event.',
+    );
+    if (gate != null) return gate;
+    final event = eventResult.requireValue;
     final (icon, title, description) = switch (state.paymentOutcome) {
       MockPaymentOutcome.success => (
         Icons.check_circle_outline,
         'you’re in',
-        'Your payment was successful. Your ticket is ready.',
+        purchase != null && purchase.completed < purchase.requested
+            ? '${purchase.completed} of ${purchase.requested} tickets were '
+                  'paid. The rest were not charged.'
+            : 'Your payment was successful. Your ticket is ready.',
       ),
       MockPaymentOutcome.declined => (
         Icons.credit_card_off_outlined,
         'payment declined',
-        'You haven’t been charged. Try again or use another method.',
+        purchase?.message ??
+            'You haven’t been charged. Try again or use another method.',
       ),
       MockPaymentOutcome.pending => (
         Icons.hourglass_bottom,
         'payment pending',
-        'Please don’t pay again. This order will update when confirmed.',
+        'Finish paying on the Paystack page that opened. Your tickets '
+            'show in Tickets once the payment is confirmed. Please don’t '
+            'pay twice.',
       ),
     };
     return Scaffold(
@@ -566,111 +738,138 @@ class _TicketsScreenState extends ConsumerState<TicketsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ref = this.ref;
-    final state = ref.watch(attendeeControllerProvider);
+    final ticketsResult = ref.watch(myTicketsProvider);
+    final rsvpsResult = ref.watch(myRsvpsProvider);
     final tokens = JolTokens.of(context);
-    final items = <({JolEvent event, String kind, String ticketId})>[
-      (
-        event: findAttendeeEvent('sundowner')!,
-        kind: '2 tickets · General',
-        ticketId: 'sundowner-0',
-      ),
-      (
-        event: findAttendeeEvent('run')!,
-        kind: state.rsvpEvents.contains('run')
-            ? 'RSVP confirmed'
-            : 'Free RSVP · demo pass',
-        ticketId: 'run-0',
-      ),
-    ];
-    for (final eventId in state.rsvpEvents) {
-      if (items.every((item) => item.event.id != eventId)) {
-        final event = findAttendeeEvent(eventId);
-        if (event != null) {
-          items.add((
-            event: event,
-            kind: 'RSVP confirmed',
-            ticketId: '${event.id}-0',
-          ));
-        }
-      }
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final tickets = ticketsResult.asData?.value ?? const <JolTicket>[];
+    final rsvps = rsvpsResult.asData?.value ?? const <JolRsvp>[];
+
+    // One row per event, counting that event's tickets.
+    final ticketItems = <({JolEvent event, String kind, String ticketId})>[];
+    final byEvent = <String, List<JolTicket>>{};
+    for (final ticket in tickets) {
+      final event = ticket.event;
+      if (event == null) continue;
+      if (ticket.status == 'cancelled' || ticket.status == 'refunded') continue;
+      byEvent.putIfAbsent(event.id, () => []).add(ticket);
     }
-    for (final eventId in state.joinedGuestlists) {
-      final event = findAttendeeEvent(eventId);
-      if (event != null) {
-        items.add((
-          event: event,
-          kind: 'Guestlist pass',
-          ticketId: '${event.id}-0',
-        ));
-      }
+    for (final group in byEvent.values) {
+      final first = group.first;
+      final pending = group.where((ticket) => ticket.isPending).length;
+      final ready = group.length - pending;
+      final tier = first.tierName ?? 'Ticket';
+      ticketItems.add((
+        event: first.event!,
+        kind: ready > 0
+            ? '$ready ticket${ready == 1 ? '' : 's'} · $tier'
+                  '${pending > 0 ? ' · $pending awaiting payment' : ''}'
+            : '$pending awaiting payment · $tier',
+        ticketId: first.id,
+      ));
     }
-    final pastItems = <({JolEvent event, String kind, String ticketId})>[
-      (
-        event: findAttendeeEvent('jazz')!,
-        kind: 'Past · General',
-        ticketId: 'jazz-0',
-      ),
+    final rsvpItems = [
+      for (final rsvp in rsvps)
+        (
+          event: rsvp.event,
+          kind: rsvp.plusOnes > 0 ? 'RSVP · +${rsvp.plusOnes}' : 'RSVP confirmed',
+          ticketId: 'rsvp-${rsvp.id}',
+        ),
     ];
-    final visibleItems = switch (_selectedTab) {
-      'Past' => pastItems,
-      'Guestlist' =>
-        items.where((item) => item.kind == 'Guestlist pass').toList(),
-      _ => items,
-    };
+
+    bool isPast(JolEvent event) => event.date.isBefore(today);
+    final visibleItems = (switch (_selectedTab) {
+      'Past' => [...ticketItems, ...rsvpItems].where((i) => isPast(i.event)).toList(),
+      'Guestlist' => rsvpItems.where((i) => !isPast(i.event)).toList(),
+      _ => [...ticketItems, ...rsvpItems].where((i) => !isPast(i.event)).toList(),
+    })..sort((a, b) => a.event.date.compareTo(b.event.date));
+
+    final isLoading =
+        (ticketsResult.isLoading && ticketsResult.asData == null) ||
+        (rsvpsResult.isLoading && rsvpsResult.asData == null);
+    final error = ticketsResult.error ?? rsvpsResult.error;
+
     return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
-        children: [
-          Text('tickets', style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 6),
-          Text(
-            'Tickets and passes, ready when you are.',
-            style: Theme.of(context).textTheme.bodyMedium
-                ?.copyWith(color: tokens.muted),
-          ),
-          const SizedBox(height: 18),
-          JolSegmented(
-            options: const ['Upcoming', 'Past', 'Guestlist'],
-            selected: _selectedTab,
-            onSelectionChanged: (value) => setState(() {
-              _selectedTab = value;
-            }),
-          ),
-          const SizedBox(height: 18),
-          AttendeeSectionTitle(_selectedTab.toLowerCase()),
-          if (visibleItems.isEmpty)
-            SizedBox(
-              height: 190,
-              child: AttendeeEmptyState(
-                title: _selectedTab == 'Guestlist'
-                    ? 'No guestlist passes yet'
-                    : 'Nothing here yet',
-                message: _selectedTab == 'Guestlist'
-                    ? 'Guestlist passes appear here after you join.'
-                    : 'Tickets and passes will appear here.',
-              ),
-            )
-          else
-            for (final item in visibleItems) ...[
-              _TicketListCard(
-                event: item.event,
-                kind: item.kind,
-                ticketId: item.ticketId,
-                onTap: () => context.push('/ticket/${item.event.id}'),
-              ),
-              const SizedBox(height: 12),
-            ],
-          AttendeeSectionTitle('need a plan?'),
-          JolCard(
-            child: JolListRow(
-              title: 'Find something for this week',
-              subtitle: 'Discover events around Cape Town.',
-              trailing: const Icon(Icons.arrow_forward),
-              onTap: () => context.go('/discover'),
+      child: RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(myTicketsProvider);
+          ref.invalidate(myRsvpsProvider);
+          await ref.read(myTicketsProvider.future).catchError((_) => <JolTicket>[]);
+        },
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 112),
+          children: [
+            Text('tickets', style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 6),
+            Text(
+              'Tickets and passes, ready when you are.',
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: tokens.muted),
             ),
-          ),
-        ],
+            const SizedBox(height: 18),
+            JolSegmented(
+              options: const ['Upcoming', 'Past', 'Guestlist'],
+              selected: _selectedTab,
+              onSelectionChanged: (value) => setState(() {
+                _selectedTab = value;
+              }),
+            ),
+            const SizedBox(height: 18),
+            AttendeeSectionTitle(_selectedTab.toLowerCase()),
+            if (isLoading)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (error != null && visibleItems.isEmpty)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Your tickets could not be loaded: $error'),
+                  TextButton(
+                    onPressed: () {
+                      ref.invalidate(myTicketsProvider);
+                      ref.invalidate(myRsvpsProvider);
+                    },
+                    child: const Text('Try again'),
+                  ),
+                ],
+              )
+            else if (visibleItems.isEmpty)
+              SizedBox(
+                height: 190,
+                child: AttendeeEmptyState(
+                  title: _selectedTab == 'Guestlist'
+                      ? 'No guestlist passes yet'
+                      : 'Nothing here yet',
+                  message: _selectedTab == 'Guestlist'
+                      ? 'Guestlist passes appear here after you join.'
+                      : 'Tickets and passes will appear here.',
+                ),
+              )
+            else
+              for (final item in visibleItems) ...[
+                _TicketListCard(
+                  event: item.event,
+                  kind: item.kind,
+                  ticketId: item.ticketId,
+                  onTap: () => context.push('/ticket/${item.event.id}'),
+                ),
+                const SizedBox(height: 12),
+              ],
+            AttendeeSectionTitle('need a plan?'),
+            JolCard(
+              child: JolListRow(
+                title: 'Find something for this week',
+                subtitle: 'Discover events around Cape Town.',
+                trailing: const Icon(Icons.arrow_forward),
+                onTap: () => context.go('/discover'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -706,6 +905,7 @@ class _TicketListCard extends ConsumerWidget {
               secondary: Color(event.posterSecondary),
               title: event.title,
               dateStamp: eventDateStamp(event.date),
+              imageUrl: event.coverImageUrl,
               size: const Size(82, 100),
             ),
             const SizedBox(width: 14),
@@ -742,129 +942,346 @@ class _TicketListCard extends ConsumerWidget {
   }
 }
 
-class TicketQrScreen extends ConsumerWidget {
+class TicketQrScreen extends ConsumerStatefulWidget {
   const TicketQrScreen({super.key, required this.eventId});
 
   final String eventId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final event = findAttendeeEvent(eventId);
-    if (event == null) {
-      return Scaffold(
-        appBar: AppBar(),
-        body: const AttendeeEmptyState(
-          title: 'Ticket unavailable',
-          message: 'This ticket is no longer available on this device.',
-        ),
-      );
+  ConsumerState<TicketQrScreen> createState() => _TicketQrScreenState();
+}
+
+class _TicketQrScreenState extends ConsumerState<TicketQrScreen> {
+  var _index = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final eventResult = ref.watch(attendeeEventProvider(widget.eventId));
+    final ticketsResult = ref.watch(myTicketsProvider);
+    final rsvps = ref.watch(myRsvpsProvider).asData?.value ?? const <JolRsvp>[];
+    final gate = _eventGate(
+      eventResult,
+      title: 'Ticket unavailable',
+      message: 'This ticket is no longer available.',
+    );
+    if (gate != null) return gate;
+    final event = eventResult.requireValue;
+    if (ticketsResult.isLoading && ticketsResult.asData == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    final state = ref.watch(attendeeControllerProvider);
-    final controller = ref.read(attendeeControllerProvider.notifier);
-    final ticketId = '$eventId-${state.ticketIndex}';
-    final isTransferred = state.transferredTickets.contains(ticketId);
-    final isScanned = state.scannedTickets.contains(ticketId);
+    final tickets = (ticketsResult.asData?.value ?? const <JolTicket>[])
+        .where(
+          (ticket) =>
+              ticket.event?.id == event.id &&
+              (ticket.isValid || ticket.isUsed || ticket.isPending),
+        )
+        .toList();
+    final rsvp = rsvps.where((item) => item.event.id == event.id).firstOrNull;
     final tokens = JolTokens.of(context);
+    final index = tickets.isEmpty ? 0 : _index.clamp(0, tickets.length - 1);
+    final ticket = tickets.isEmpty ? null : tickets[index];
 
     return Scaffold(
       appBar: AppBar(title: const Text('your ticket')),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        children: [
-          JolPoster(
-            style: event.posterStyle,
-            primary: Color(event.posterPrimary),
-            secondary: Color(event.posterSecondary),
-            title: event.title,
-            area: event.area,
-            dateStamp: eventDateStamp(event.date),
-            size: Size(MediaQuery.sizeOf(context).width - 40, 210),
-          ),
-          const SizedBox(height: 16),
-          Text(event.title, style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 4),
-          Text(
-            '${formatEventDate(event.date)} · ${event.startTime} · ${event.area}',
-            style: Theme.of(context).textTheme.bodyMedium
-                ?.copyWith(color: tokens.muted),
-          ),
-          const SizedBox(height: 18),
-          JolCard(
-            child: Column(
-              children: [
-                if (isTransferred)
-                  const Padding(
-                    padding: EdgeInsets.all(18),
-                    child: Text('Transferred · this QR no longer works.'),
-                  )
-                else ...[
-                  Container(
-                    color: Colors.white,
-                    padding: const EdgeInsets.all(10),
-                    child: QrImageView(
-                      data: 'JOL-DEMO-$eventId-${state.ticketIndex + 1}',
-                      version: QrVersions.auto,
-                      size: 220,
-                      backgroundColor: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('Ticket ${state.ticketIndex + 1} of 2'),
-                  Text(
-                    'Turn your brightness up at the door.',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: tokens.muted),
-                  ),
-                  if (isScanned) ...[
-                    const SizedBox(height: 8),
-                    const Text('Checked in'),
-                  ],
-                ],
-              ],
+      body: RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(myTicketsProvider);
+          await ref.read(myTicketsProvider.future).catchError((_) => <JolTicket>[]);
+        },
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          children: [
+            JolPoster(
+              style: event.posterStyle,
+              primary: Color(event.posterPrimary),
+              secondary: Color(event.posterSecondary),
+              title: event.title,
+              area: event.area,
+              dateStamp: eventDateStamp(event.date),
+              imageUrl: event.coverImageUrl,
+              size: Size(MediaQuery.sizeOf(context).width - 40, 210),
             ),
-          ),
-          if (event.canTransfer && !isTransferred && !isScanned) ...[
-            const SizedBox(height: 14),
-            JolButton(
-              label: 'Transfer ticket',
-              expanded: true,
-              variant: JolButtonVariant.ghost,
-              onPressed: () =>
-                  _showTransferSheet(context, ref, event, ticketId),
-            ),
-          ],
-          if (event.isAgeRestricted) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
+            Text(event.title, style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 4),
             Text(
-              '18+ event · bring a valid ID.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium,
+              '${formatEventDate(event.date)} · ${event.startTime} · ${event.area}',
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: tokens.muted),
             ),
-          ],
-          const SizedBox(height: 18),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconButton(
-                tooltip: 'Previous ticket',
-                onPressed: state.ticketIndex == 0
-                    ? null
-                    : () => controller.setTicketIndex(state.ticketIndex - 1),
-                icon: const Icon(Icons.chevron_left),
+            const SizedBox(height: 18),
+            JolCard(
+              child: ticket == null
+                  ? Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Text(
+                        rsvp != null
+                            ? 'You’re on the list'
+                                  '${rsvp.plusOnes > 0 ? ' with +${rsvp.plusOnes}' : ''}. '
+                                  'Give your name at the door.'
+                            : 'No ticket for this event on your account.',
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  : Column(
+                      children: [
+                        if (ticket.isPending)
+                          const Padding(
+                            padding: EdgeInsets.all(18),
+                            child: Text(
+                              'Awaiting payment. Your QR code appears once the '
+                              'payment is confirmed.',
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        else ...[
+                          Container(
+                            color: Colors.white,
+                            padding: const EdgeInsets.all(10),
+                            child: QrImageView(
+                              data: ticket.code,
+                              version: QrVersions.auto,
+                              size: 220,
+                              backgroundColor: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(ticket.code),
+                          Text(
+                            '${ticket.tierName ?? 'Ticket'} · ${ticket.guestName}',
+                          ),
+                          if (ticket.tableName != null)
+                            Text('Table: ${ticket.tableName}'),
+                          if (ticket.isGroupGuest)
+                            Text(
+                              'Part of a group booking: send it to a friend '
+                              'with Transfer.',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: tokens.muted),
+                            ),
+                          Text(
+                            'Turn your brightness up at the door.',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: tokens.muted),
+                          ),
+                          if (ticket.isUsed) ...[
+                            const SizedBox(height: 8),
+                            const Text('Checked in'),
+                          ],
+                        ],
+                      ],
+                    ),
+            ),
+            if (ticket != null &&
+                event.canTransfer &&
+                ticket.isValid) ...[
+              const SizedBox(height: 14),
+              JolButton(
+                label: 'Transfer ticket',
+                expanded: true,
+                variant: JolButtonVariant.ghost,
+                onPressed: () =>
+                    _showTransferSheet(context, ref, event, ticket.id),
               ),
-              Text('Ticket ${state.ticketIndex + 1} of 2'),
-              IconButton(
-                tooltip: 'Next ticket',
-                onPressed: state.ticketIndex == 1
-                    ? null
-                    : () => controller.setTicketIndex(state.ticketIndex + 1),
-                icon: const Icon(Icons.chevron_right),
+            ],
+            if (ticket != null && !ticket.isPending && ticket.ticketPageUrl != null) ...[
+              const SizedBox(height: 10),
+              JolButton(
+                label: 'Ticket page · save as PDF',
+                expanded: true,
+                variant: JolButtonVariant.ghost,
+                onPressed: () => launchUrl(
+                  Uri.parse(ticket.ticketPageUrl!),
+                  mode: LaunchMode.externalApplication,
+                ),
+              ),
+            ],
+            if (ticket != null && event.isPaid && ticket.isValid) ...[
+              const SizedBox(height: 10),
+              if (ticket.refundStatus != null)
+                Text(
+                  switch (ticket.refundStatus) {
+                    'pending' => 'Refund requested · waiting for the organiser',
+                    'approved' => 'Refund approved',
+                    'declined' => 'Refund request declined',
+                    _ => 'Refund ${ticket.refundStatus}',
+                  },
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                )
+              else
+                JolButton(
+                  label: 'Request a refund',
+                  expanded: true,
+                  variant: JolButtonVariant.ghost,
+                  onPressed: () => _requestRefund(context, ref, ticket.id),
+                ),
+              if (!ticket.isGroupGuest)
+                TextButton(
+                  onPressed: () => _reportPaymentProblem(context, ref, ticket.id),
+                  child: const Text('Report a problem with this payment'),
+                ),
+            ],
+            if (event.isAgeRestricted) ...[
+              const SizedBox(height: 14),
+              Text(
+                '18+ event · bring a valid ID.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
+            if (tickets.length > 1) ...[
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    tooltip: 'Previous ticket',
+                    onPressed: index == 0
+                        ? null
+                        : () => setState(() => _index = index - 1),
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                  Text('Ticket ${index + 1} of ${tickets.length}'),
+                  IconButton(
+                    tooltip: 'Next ticket',
+                    onPressed: index == tickets.length - 1
+                        ? null
+                        : () => setState(() => _index = index + 1),
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _requestRefund(
+  BuildContext context,
+  WidgetRef ref,
+  String ticketId,
+) async {
+  final reason = TextEditingController();
+  final send = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Request a refund'),
+      content: TextField(
+        controller: reason,
+        maxLines: 3,
+        maxLength: 500,
+        decoration: const InputDecoration(
+          hintText: 'Tell the organiser why (required)',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Send request'),
+        ),
+      ],
+    ),
+  );
+  if (send != true || !context.mounted) return;
+  if (reason.text.trim().length < 5) {
+    JolToast.show(context, 'Please give a short reason.');
+    return;
+  }
+  try {
+    final message = await ref
+        .read(bookingRepositoryProvider)
+        .requestRefund(ticketId, reason.text.trim());
+    ref.invalidate(myTicketsProvider);
+    if (context.mounted) JolToast.show(context, message);
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
+  }
+}
+
+Future<void> _reportPaymentProblem(
+  BuildContext context,
+  WidgetRef ref,
+  String ticketId,
+) async {
+  const reasons = {
+    'event_cancelled': 'The event was cancelled or didn’t happen',
+    'not_let_in': 'I wasn’t let in with a valid ticket',
+    'not_as_described': 'The event was very different from its listing',
+    'charged_wrong': 'I was charged the wrong amount or twice',
+    'other': 'Something else',
+  };
+  var reason = reasons.keys.first;
+  final details = TextEditingController();
+  final send = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('Report a problem'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'If the organiser can’t sort it out, the JOL team looks into '
+                'it and replies within 3 working days.',
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: reason,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'What went wrong'),
+                items: [
+                  for (final entry in reasons.entries)
+                    DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+                ],
+                onChanged: (value) => setState(() => reason = value ?? reason),
+              ),
+              TextField(
+                controller: details,
+                minLines: 3,
+                maxLines: 6,
+                maxLength: 2000,
+                decoration: const InputDecoration(
+                  labelText: 'What happened',
+                ),
               ),
             ],
           ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Send to JOL'),
+          ),
         ],
       ),
-    );
+    ),
+  );
+  final text = details.text.trim();
+  if (send != true || !context.mounted) return;
+  if (text.length < 10) {
+    JolToast.show(context, 'Tell us a little more about what happened.');
+    return;
+  }
+  try {
+    final message = await ref
+        .read(bookingRepositoryProvider)
+        .reportPaymentProblem(ticketId, reason: reason, details: text);
+    if (context.mounted) JolToast.show(context, message);
+  } on ApiException catch (error) {
+    if (context.mounted) JolToast.show(context, error.message);
   }
 }
 
@@ -881,19 +1298,23 @@ Future<void> _showTransferSheet(
   );
 }
 
-class _TransferForm extends StatefulWidget {
+class _TransferForm extends ConsumerStatefulWidget {
   const _TransferForm({required this.event, required this.ticketId});
 
   final JolEvent event;
   final String ticketId;
 
   @override
-  State<_TransferForm> createState() => _TransferFormState();
+  ConsumerState<_TransferForm> createState() => _TransferFormState();
 }
 
-class _TransferFormState extends State<_TransferForm> {
+/// Sends POST /tickets/{id}/transfer. The ticket moves to the other person's
+/// JOL account with a new code, so this phone's QR stops working.
+class _TransferFormState extends ConsumerState<_TransferForm> {
   final _recipient = TextEditingController();
-  var _confirmed = false;
+  var _sending = false;
+  String? _sentTo;
+  String? _error;
 
   @override
   void dispose() {
@@ -901,57 +1322,117 @@ class _TransferFormState extends State<_TransferForm> {
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_confirmed) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 16),
-        child: Text('Ticket transferred. Your QR code has been disabled.'),
-      );
+  Future<void> _confirm() async {
+    final recipient = _recipient.text.trim();
+    final looksValid =
+        recipient.contains('@') ||
+        RegExp(r'^\+?[0-9\s()-]{9,}$').hasMatch(recipient);
+    if (!looksValid) {
+      setState(() => _error = 'Enter their email or mobile number.');
+      return;
     }
-    return Consumer(
-      builder: (context, ref, _) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Send by @username, mobile number or email.'),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _recipient,
-            decoration: const InputDecoration(labelText: 'Recipient'),
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Transfer this ticket?'),
+        content: Text(
+          'Your ticket to ${widget.event.title} goes to $recipient. '
+          'This can’t be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep it'),
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'This cannot be undone. Your QR stops working once the transfer is complete.',
-          ),
-          const SizedBox(height: 12),
-          JolButton(
-            label: 'Confirm transfer',
-            expanded: true,
-            onPressed: _recipient.text.trim().isEmpty
-                ? null
-                : () {
-                    final recipient = _recipient.text.trim();
-                    final isValidRecipient =
-                        recipient.startsWith('@') ||
-                        recipient.contains('@') ||
-                        RegExp(r'^\+?[0-9\s()-]{7,}$').hasMatch(recipient);
-
-                    if (!isValidRecipient) {
-                      JolToast.show(
-                        context,
-                        'Use an @username, email or mobile number.',
-                      );
-                      return;
-                    }
-
-                    ref
-                        .read(attendeeControllerProvider.notifier)
-                        .transferTicket(widget.ticketId);
-                    setState(() => _confirmed = true);
-                  },
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Transfer'),
           ),
         ],
       ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    try {
+      final name = await ref
+          .read(bookingRepositoryProvider)
+          .transferTicket(widget.ticketId, recipient);
+      ref.read(attendeeControllerProvider.notifier).transferTicket(widget.ticketId);
+      ref.invalidate(myTicketsProvider);
+      if (mounted) setState(() => _sentTo = name ?? recipient);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    if (_sentTo != null) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Ticket sent to $_sentTo. It’s in their Tickets tab now.'),
+            const SizedBox(height: 8),
+            Text(
+              'Your QR code no longer works.',
+              style: TextStyle(color: tokens.muted),
+            ),
+            const SizedBox(height: 16),
+            JolButton(
+              label: 'Done',
+              expanded: true,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Send it to the email or mobile number on their JOL account. '
+          'They need to sign up first if they don’t have one.',
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _recipient,
+          keyboardType: TextInputType.emailAddress,
+          autocorrect: false,
+          onChanged: (_) => setState(() => _error = null),
+          decoration: const InputDecoration(
+            labelText: 'Email or mobile number',
+          ),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            _error!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ],
+        const SizedBox(height: 12),
+        Text(
+          'This can’t be undone. Your QR stops working once the ticket is sent.',
+          style: TextStyle(color: tokens.muted),
+        ),
+        const SizedBox(height: 12),
+        JolButton(
+          label: _sending ? 'Sending…' : 'Transfer ticket',
+          expanded: true,
+          onPressed: _sending || _recipient.text.trim().isEmpty
+              ? null
+              : _confirm,
+        ),
+      ],
     );
   }
 }
@@ -978,16 +1459,14 @@ class _FundScreenState extends ConsumerState<FundScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final event = findAttendeeEvent(widget.eventId);
-    if (event == null) {
-      return Scaffold(
-        appBar: AppBar(),
-        body: const AttendeeEmptyState(
-          title: 'Contribution unavailable',
-          message: 'This event could not be found.',
-        ),
-      );
-    }
+    final eventResult = ref.watch(attendeeEventProvider(widget.eventId));
+    final gate = _eventGate(
+      eventResult,
+      title: 'Contribution unavailable',
+      message: 'This event could not be found.',
+    );
+    if (gate != null) return gate;
+    final event = eventResult.requireValue;
     final state = ref.watch(attendeeControllerProvider);
     final controller = ref.read(attendeeControllerProvider.notifier);
     final tokens = JolTokens.of(context);
@@ -1080,7 +1559,7 @@ class _FundScreenState extends ConsumerState<FundScreen> {
               controller.setContributionAmount(boundedAmount);
               JolToast.show(
                 context,
-                'Contribution queued for payment and host settlement.',
+                'Contributions aren’t available in the app yet.',
               );
             },
           ),
@@ -1090,24 +1569,22 @@ class _FundScreenState extends ConsumerState<FundScreen> {
   }
 }
 
-class ShareEventScreen extends StatelessWidget {
+class ShareEventScreen extends ConsumerWidget {
   const ShareEventScreen({super.key, required this.eventId});
 
   final String eventId;
 
   @override
-  Widget build(BuildContext context) {
-    final event = findAttendeeEvent(eventId);
-    if (event == null) {
-      return Scaffold(
-        appBar: AppBar(),
-        body: const AttendeeEmptyState(
-          title: 'Event not found',
-          message: 'Return to Discover to share another event.',
-        ),
-      );
-    }
-    final shareUrl = 'https://jol.app/events/${event.id}';
+  Widget build(BuildContext context, WidgetRef ref) {
+    final eventResult = ref.watch(attendeeEventProvider(eventId));
+    final gate = _eventGate(
+      eventResult,
+      title: 'Event not found',
+      message: 'Return to Discover to share another event.',
+    );
+    if (gate != null) return gate;
+    final event = eventResult.requireValue;
+    final shareUrl = event.shareUrl ?? 'https://jol.app/events/${event.id}';
     final shareText =
         '${event.title} · ${formatEventDate(event.date)} · '
         'Cape Town\n$shareUrl';
@@ -1127,6 +1604,7 @@ class ShareEventScreen extends StatelessWidget {
                   title: event.title,
                   area: event.area,
                   dateStamp: eventDateStamp(event.date),
+                  imageUrl: event.coverImageUrl,
                   size: const Size(100, 126),
                 ),
                 const SizedBox(width: 12),
@@ -1173,7 +1651,7 @@ class ShareEventScreen extends StatelessWidget {
             variant: JolButtonVariant.ghost,
             onPressed: () async {
               await Clipboard.setData(
-                ClipboardData(text: 'https://jol.app/events/${event.id}'),
+                ClipboardData(text: shareUrl),
               );
               if (context.mounted) JolToast.show(context, 'Event link copied.');
             },
@@ -1218,18 +1696,83 @@ class StudentVerificationScreen extends ConsumerStatefulWidget {
       _StudentVerificationScreenState();
 }
 
+/// Student status: the university email gets a 6-digit code, valid 24 hours.
+/// JOL only sends it to the university domains its team has listed.
 class _StudentVerificationScreenState
     extends ConsumerState<StudentVerificationScreen> {
   final _email = TextEditingController();
   final _code = TextEditingController();
   var _codeSent = false;
-  var _error = false;
+  var _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  Future<void> _loadStatus() async {
+    try {
+      final status = await ref.read(profileRepositoryProvider).studentStatus();
+      if (status.verified && status.email != null && mounted) {
+        ref.read(attendeeControllerProvider.notifier).verifyStudent(status.email!);
+      }
+    } on ApiException {
+      // Offline: show the form.
+    }
+  }
 
   @override
   void dispose() {
     _email.dispose();
     _code.dispose();
     super.dispose();
+  }
+
+  Future<void> _send() async {
+    final email = _email.text.trim();
+    if (!email.contains('@')) {
+      setState(() => _error = 'Enter your university email.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final message = await ref.read(profileRepositoryProvider).sendStudentCode(email);
+      if (!mounted) return;
+      setState(() => _codeSent = true);
+      JolToast.show(context, message);
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _confirm() async {
+    final code = _code.text.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      setState(() => _error = 'Enter the 6-digit code.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(profileRepositoryProvider).confirmStudentCode(code);
+      if (!mounted) return;
+      ref.read(attendeeControllerProvider.notifier).verifyStudent(_email.text);
+      ref.invalidate(currentUserProvider);
+      JolToast.show(context, 'You’re verified as a student.');
+    } on ApiException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -1277,8 +1820,8 @@ class _StudentVerificationScreenState
           const SizedBox(height: 8),
           Text(
             _codeSent
-                ? 'Enter the 6-digit code sent to ${_email.text.trim()}.'
-                : 'Use your university email ending in .ac.za.',
+                ? 'Enter the 6-digit code we sent to ${_email.text.trim()}. It works for 24 hours.'
+                : 'Use your university email, like name@myuct.ac.za. We send you a code straight away.',
             style: Theme.of(context).textTheme.bodyLarge
                 ?.copyWith(color: tokens.muted),
           ),
@@ -1287,11 +1830,11 @@ class _StudentVerificationScreenState
             TextField(
               controller: _email,
               keyboardType: TextInputType.emailAddress,
+              autocorrect: false,
               decoration: InputDecoration(
                 labelText: 'University email',
-                errorText: _error
-                    ? "That isn't a student email. Use your university address ending in .ac.za, like name@myuct.ac.za."
-                    : null,
+                errorText: _error,
+                errorMaxLines: 3,
               ),
             )
           else
@@ -1299,55 +1842,32 @@ class _StudentVerificationScreenState
               controller: _code,
               keyboardType: TextInputType.number,
               maxLength: 6,
-              decoration: const InputDecoration(labelText: '6-digit code'),
+              autofillHints: const [AutofillHints.oneTimeCode],
+              decoration: InputDecoration(
+                labelText: '6-digit code',
+                errorText: _error,
+              ),
             ),
           const SizedBox(height: 12),
           JolButton(
-            label: _codeSent ? 'Verify code' : 'Send code',
+            label: _busy
+                ? 'Please wait…'
+                : _codeSent
+                ? 'Verify code'
+                : 'Send code',
             expanded: true,
-            onPressed: () {
-              if (!_codeSent) {
-                if (!isValidStudentEmail(_email.text)) {
-                  setState(() => _error = true);
-                  return;
-                }
-                setState(() {
-                  _error = false;
-                  _codeSent = true;
-                });
-                JolToast.show(
-                  context,
-                  'Verification code sent to ${_email.text.trim()}.',
-                );
-                return;
-              }
-              if (_code.text.trim().length != 6) {
-                JolToast.show(context, 'Enter the 6-digit code.');
-                return;
-              }
-              if (!_code.text.trim().contains(RegExp(r'^\d{6}$'))) {
-                JolToast.show(context, 'Enter the 6-digit code.');
-                return;
-              }
-
-              ref
-                  .read(attendeeControllerProvider.notifier)
-                  .verifyStudent(_email.text);
-              JolToast.show(context, 'Student verification complete.');
-            },
+            onPressed: _busy ? null : (_codeSent ? _confirm : _send),
           ),
           if (_codeSent) ...[
             TextButton(
-              onPressed: () {
-                JolToast.show(
-                  context,
-                  'A fresh verification code has been sent to ${_email.text.trim()}.',
-                );
-              },
+              onPressed: _busy ? null : _send,
               child: const Text('Send a new code'),
             ),
             TextButton(
-              onPressed: () => setState(() => _codeSent = false),
+              onPressed: () => setState(() {
+                _codeSent = false;
+                _error = null;
+              }),
               child: const Text('Change email'),
             ),
           ],
@@ -1362,4 +1882,24 @@ class _StudentVerificationScreenState
       ),
     );
   }
+}
+
+/// Loading / error screen while an event loads from the API, or null once
+/// the event is available.
+Widget? _eventGate(
+  AsyncValue<JolEvent> result, {
+  required String title,
+  required String message,
+}) {
+  if (result.asData != null) return null;
+  if (result.isLoading) {
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+  }
+  return Scaffold(
+    appBar: AppBar(),
+    body: AttendeeEmptyState(
+      title: title,
+      message: result.hasError ? result.error.toString() : message,
+    ),
+  );
 }

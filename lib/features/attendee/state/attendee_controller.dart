@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 enum AttendeeSearchTab { all, events, organisers, people }
 
@@ -14,6 +15,7 @@ class AttendeeState {
     this.location = 'Cape Town',
     this.currentEventId = 'sundowner',
     this.selectedTierId = 'general',
+    this.selectedTable,
     this.quantity = 2,
     this.searchQuery = '',
     this.searchTab = AttendeeSearchTab.all,
@@ -45,6 +47,9 @@ class AttendeeState {
   final String location;
   final String currentEventId;
   final String selectedTierId;
+
+  /// For a table booking: the table the guest picked (null = any free one).
+  final String? selectedTable;
   final int quantity;
   final String searchQuery;
   final AttendeeSearchTab searchTab;
@@ -77,6 +82,8 @@ class AttendeeState {
     String? location,
     String? currentEventId,
     String? selectedTierId,
+    String? selectedTable,
+    bool clearSelectedTable = false,
     int? quantity,
     String? searchQuery,
     AttendeeSearchTab? searchTab,
@@ -110,6 +117,9 @@ class AttendeeState {
       location: location ?? this.location,
       currentEventId: currentEventId ?? this.currentEventId,
       selectedTierId: selectedTierId ?? this.selectedTierId,
+      selectedTable: clearSelectedTable
+          ? null
+          : selectedTable ?? this.selectedTable,
       quantity: quantity ?? this.quantity,
       searchQuery: searchQuery ?? this.searchQuery,
       searchTab: searchTab ?? this.searchTab,
@@ -159,6 +169,7 @@ class AttendeeController extends Notifier<AttendeeState> {
     state = state.copyWith(
       currentEventId: id,
       selectedTierId: initialTierId ?? 'general',
+      clearSelectedTable: true,
       quantity: 2,
       ticketIndex: 0,
     );
@@ -183,7 +194,18 @@ class AttendeeController extends Notifier<AttendeeState> {
   }
 
   void selectTier(String tierId) {
-    state = state.copyWith(selectedTierId: tierId, quantity: 1);
+    state = state.copyWith(
+      selectedTierId: tierId,
+      quantity: 1,
+      clearSelectedTable: true,
+    );
+  }
+
+  /// For a table booking: which table (null = any free one).
+  void selectTable(String? table) {
+    state = table == null
+        ? state.copyWith(clearSelectedTable: true)
+        : state.copyWith(selectedTable: table);
   }
 
   void setQuantity(int quantity) {
@@ -279,10 +301,35 @@ class AttendeeController extends Notifier<AttendeeState> {
 
   void resetSession() {
     state = const AttendeeState();
+    _rememberMode(AppAccessMode.attendee);
   }
 
+  static const _modeKey = 'jol_access_mode';
+
+  /// Guest or host mode, remembered on this phone for next time.
   void setAccessMode(AppAccessMode mode) {
     state = state.copyWith(accessMode: mode);
+    _rememberMode(mode);
+  }
+
+  /// Called by the splash screen: back in the mode used last time.
+  Future<void> restoreAccessMode() async {
+    try {
+      final saved = await const FlutterSecureStorage().read(key: _modeKey);
+      final mode = AppAccessMode.values.where((value) => value.name == saved).firstOrNull;
+      // Door staff mode is chosen per shift, not remembered.
+      if (mode != null && mode != AppAccessMode.staff) {
+        state = state.copyWith(accessMode: mode);
+      }
+    } catch (_) {
+      // Nothing saved, or storage unavailable: guest mode.
+    }
+  }
+
+  void _rememberMode(AppAccessMode mode) {
+    const FlutterSecureStorage()
+        .write(key: _modeKey, value: mode.name)
+        .catchError((Object _) {});
   }
 
   void setOffline(bool value) {

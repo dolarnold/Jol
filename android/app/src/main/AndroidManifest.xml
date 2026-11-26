@@ -1,5 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- "Near me" on Discover and "Use my location" in the event location picker. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <!-- Scanning tickets at the door. Phones without a camera can still install the app. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="jol"
         android:name="${applicationName}"
@@ -25,7 +31,27 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Shared event links (https://…/e/CODE) open in the app when it's installed.
+                 The website proves the app is JOL's through /.well-known/assetlinks.json
+                 (Admin → Integrations → App links). jolnow.co.za is the main
+                 address; the old Laravel Cloud address stays so links already
+                 shared keep opening the app. -->
+            <meta-data android:name="flutter_deeplinking_enabled" android:value="true" />
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="jolnow.co.za" />
+                <data android:host="www.jolnow.co.za" />
+                <data android:host="jol-backend-production-xgp5ka.laravel.cloud" />
+                <data android:pathPrefix="/e/" />
+            </intent-filter>
         </activity>
+        <!-- Google Maps key, set as GOOGLE_MAPS_API_KEY in android/local.properties. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${googleMapsApiKey}" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
