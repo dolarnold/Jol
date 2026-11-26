@@ -140,6 +140,20 @@ class AttendeeMeScreen extends ConsumerWidget {
             child: Column(
               children: [
                 JolListRow(
+                  title: 'Friends',
+                  subtitle: 'See which events your friends are going to',
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/friends'),
+                ),
+                const Divider(height: 12),
+                JolListRow(
+                  title: 'Group bookings',
+                  subtitle: 'Bookings split with friends',
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/splits'),
+                ),
+                const Divider(height: 12),
+                JolListRow(
                   title: 'JOL credit',
                   subtitle: 'Gift cards and invites',
                   trailing: const Icon(Icons.chevron_right),

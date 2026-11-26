@@ -154,7 +154,9 @@ class AttendeePosterCard extends StatelessWidget {
                       const SizedBox(height: 5),
                       Text(
                         event.title,
-                        maxLines: 2,
+                        maxLines: compact && event.friendsGoing.isNotEmpty
+                            ? 1
+                            : 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontFamily: 'ArchivoExpanded',
@@ -175,6 +177,14 @@ class AttendeePosterCard extends StatelessWidget {
                           color: tokens.muted,
                         ),
                       ),
+                      if (event.friendsGoing.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        FriendFaces(
+                          faces: event.friendsGoing,
+                          label: event.friendsGoingText,
+                          size: 20,
+                        ),
+                      ],
                       const Spacer(),
                       Row(
                         children: [
@@ -200,6 +210,99 @@ class AttendeePosterCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Overlapping friend photos (or initials) with "Thandi and 3 friends going".
+class FriendFaces extends StatelessWidget {
+  const FriendFaces({
+    super.key,
+    required this.faces,
+    required this.label,
+    this.size = 24,
+    this.max = 4,
+  });
+
+  final List<JolFriendFace> faces;
+  final String label;
+  final double size;
+  final int max;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    final shown = faces.take(max).toList(growable: false);
+    final overlap = size * .62;
+    return Semantics(
+      label: label,
+      excludeSemantics: true,
+      child: Row(
+        children: [
+          SizedBox(
+            width: size + overlap * (shown.length - 1),
+            height: size,
+            child: Stack(
+              children: [
+                for (var index = 0; index < shown.length; index++)
+                  Positioned(
+                    left: overlap * index,
+                    child: FriendAvatar(face: shown[index], size: size),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: tokens.text,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A friend's photo, or their initial on the accent colour.
+class FriendAvatar extends StatelessWidget {
+  const FriendAvatar({super.key, required this.face, this.size = 24});
+
+  final JolFriendFace face;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final tokens = JolTokens.of(context);
+    final url = face.avatarUrl;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: tokens.accent,
+        border: Border.all(color: tokens.surface, width: 1.5),
+        image: url == null
+            ? null
+            : DecorationImage(image: NetworkImage(url), fit: BoxFit.cover),
+      ),
+      alignment: Alignment.center,
+      child: url == null
+          ? Text(
+              face.initial,
+              style: TextStyle(
+                color: tokens.onAccent,
+                fontSize: size * .45,
+                fontWeight: FontWeight.w700,
+              ),
+            )
+          : null,
     );
   }
 }

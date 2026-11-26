@@ -56,6 +56,34 @@ class JolTicketTier {
   };
 }
 
+/// A friend going to an event: first name and photo only.
+@immutable
+class JolFriendFace {
+  const JolFriendFace({required this.id, required this.name, this.avatarUrl});
+
+  final String id;
+  final String name;
+  final String? avatarUrl;
+
+  String get initial => name.isEmpty ? '?' : name[0].toUpperCase();
+
+  static List<JolFriendFace> listFrom(Object? raw) => raw is List
+      ? raw
+            .whereType<Map>()
+            .map(
+              (face) => JolFriendFace(
+                id: '${face['id']}',
+                name: face['name'] as String? ?? 'Friend',
+                avatarUrl: switch (face['avatar_url']) {
+                  final String url when url.isNotEmpty => url,
+                  _ => null,
+                },
+              ),
+            )
+            .toList(growable: false)
+      : const <JolFriendFace>[];
+}
+
 @immutable
 class JolEvent {
   const JolEvent({
@@ -125,7 +153,22 @@ class JolEvent {
     this.hostRating,
     this.hostReviewCount = 0,
     this.viewerCanReview = false,
+    this.friendsGoingCount = 0,
+    this.friendsGoing = const <JolFriendFace>[],
   });
+
+  /// Friends (people who follow each other with the viewer) going.
+  final int friendsGoingCount;
+  final List<JolFriendFace> friendsGoing;
+
+  /// "Thandi and 3 friends going", or empty.
+  String get friendsGoingText {
+    if (friendsGoingCount <= 0 || friendsGoing.isEmpty) return '';
+    final first = friendsGoing.first.name;
+    if (friendsGoingCount == 1) return '$first is going';
+    final others = friendsGoingCount - 1;
+    return '$first and $others ${others == 1 ? 'friend' : 'friends'} going';
+  }
 
   final String id;
   final String title;
@@ -394,6 +437,12 @@ class JolEvent {
           ? ((json['host_rating'] as Map)['count'] as num?)?.toInt() ?? 0
           : 0,
       viewerCanReview: json['viewer_can_review'] == true,
+      friendsGoingCount: json['friends_going'] is Map
+          ? ((json['friends_going'] as Map)['count'] as num?)?.toInt() ?? 0
+          : 0,
+      friendsGoing: json['friends_going'] is Map
+          ? JolFriendFace.listFrom((json['friends_going'] as Map)['faces'])
+          : const <JolFriendFace>[],
     );
   }
 

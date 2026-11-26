@@ -24,6 +24,7 @@ import '../../../ui/widgets/jol_segmented.dart';
 import '../../../ui/widgets/jol_sheet.dart';
 import '../../../ui/widgets/jol_toast.dart';
 import '../../profile/growth_screens.dart';
+import '../../social/social_screens.dart';
 
 class TicketSelectionScreen extends ConsumerStatefulWidget {
   const TicketSelectionScreen({super.key, required this.eventId});
@@ -494,6 +495,32 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: tokens.muted),
           ),
+          // Several people: one person books, everyone pays their own share.
+          if (total >= 20 &&
+              tier.peoplePerTicket * (tier.isTable ? 1 : state.quantity) >= 2) ...[
+            const SizedBox(height: 18),
+            JolCard(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: JolListRow(
+                title: 'Split with friends',
+                subtitle:
+                    'Book for the group now; each friend pays their own share by card',
+                trailing: const Icon(Icons.call_split),
+                onTap: _isPaying
+                    ? null
+                    : () => startSplitBooking(
+                        context,
+                        ref,
+                        event: event,
+                        tier: tier,
+                        quantity: state.quantity,
+                        total: total,
+                        promoCode: _promo?.code,
+                        tableName: state.selectedTable,
+                      ),
+              ),
+            ),
+          ],
         ],
       ),
       bottomNavigationBar: SafeArea(
@@ -1584,10 +1611,11 @@ class ShareEventScreen extends ConsumerWidget {
     );
     if (gate != null) return gate;
     final event = eventResult.requireValue;
-    final shareUrl = event.shareUrl ?? 'https://jol.app/events/${event.id}';
+    final shareUrl = event.shareUrl ?? 'https://jolnow.co.za/events';
+    // The link shows a preview card (cover, name, date, price) in WhatsApp.
     final shareText =
-        '${event.title} · ${formatEventDate(event.date)} · '
-        'Cape Town\n$shareUrl';
+        '${event.title}\n${formatEventDate(event.date)}, ${event.startTime} · '
+        '${event.area}\n${event.attendanceText} on JOL 👉 $shareUrl';
     return Scaffold(
       appBar: AppBar(title: const Text('share event')),
       body: ListView(
@@ -1627,24 +1655,39 @@ class ShareEventScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 18),
-          for (final platform in [
-            'WhatsApp',
-            'Instagram',
-            'TikTok',
-            'X',
-            'Facebook',
-          ])
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: JolCard(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: JolListRow(
-                  title: platform,
-                  trailing: const Icon(Icons.ios_share),
-                  onTap: () => _shareText(context, shareText),
-                ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: JolCard(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: JolListRow(
+                title: 'WhatsApp',
+                subtitle: 'Sends a preview card with the cover and date',
+                trailing: const Icon(Icons.chat_outlined),
+                onTap: () async {
+                  final opened = await launchUrl(
+                    Uri.parse(
+                      'https://wa.me/?text=${Uri.encodeComponent(shareText)}',
+                    ),
+                    mode: LaunchMode.externalApplication,
+                  );
+                  if (!opened && context.mounted) {
+                    await _shareText(context, shareText);
+                  }
+                },
               ),
             ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: JolCard(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: JolListRow(
+                title: 'Instagram, X, Facebook and more',
+                trailing: const Icon(Icons.ios_share),
+                onTap: () => _shareText(context, shareText),
+              ),
+            ),
+          ),
           JolButton(
             label: 'Copy link',
             expanded: true,

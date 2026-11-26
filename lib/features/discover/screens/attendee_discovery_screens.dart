@@ -19,6 +19,7 @@ import '../../attendee/state/attendee_controller.dart';
 import '../../maps/discover_map_screen.dart';
 import '../../maps/event_location_card.dart';
 import '../../maps/maps_repository.dart';
+import '../../social/social_screens.dart';
 import '../data/event_repository.dart';
 import '../models/jol_event.dart';
 import '../widgets/attendee_components.dart';
@@ -1204,14 +1205,34 @@ class EventDetailsView extends ConsumerWidget {
                   'who’s going',
                   trailing: Text('${event.attending}'),
                 ),
+                if (event.friendsGoing.isNotEmpty) ...[
+                  FriendFaces(
+                    faces: event.friendsGoing,
+                    label: event.friendsGoingText,
+                    size: 32,
+                    max: 5,
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 Text(
-                  'People who choose to appear on public guest lists show here.',
+                  event.friendsGoing.isEmpty
+                      ? 'Follow your friends to see when they’re going.'
+                      : 'Only friends who follow each other with you show here.',
                   style: Theme.of(context).textTheme.bodyMedium
                       ?.copyWith(color: tokens.muted),
                 ),
+                if (!preview && event.isApiBacked)
+                  TextButton(
+                    onPressed: () => context.push('/friends'),
+                    child: const Text('Find friends'),
+                  ),
               ],
             ),
           ),
+          if (!preview && event.isApiBacked) ...[
+            const SizedBox(height: 14),
+            JolCard(child: EventWallSection(event: event)),
+          ],
           const SizedBox(height: 94),
         ],
       ),

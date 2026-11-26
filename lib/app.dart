@@ -8,6 +8,7 @@ import 'features/booking/screens/attendee_booking_screens.dart';
 import 'features/discover/screens/attendee_discovery_screens.dart';
 import 'features/door/door_screen.dart';
 import 'features/profile/screens/attendee_profile_screens.dart';
+import 'features/social/social_screens.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/signup_screen.dart';
 import 'ui/screens/splash_screen.dart';
@@ -48,6 +49,26 @@ GoRouter _createRouter() {
         path: '/event/:eventId',
         builder: (context, state) =>
             EventScreen(eventId: state.pathParameters['eventId']!),
+      ),
+      GoRoute(
+        path: '/event/:eventId/wall',
+        builder: (context, state) =>
+            EventWallScreen(eventId: state.pathParameters['eventId']!),
+      ),
+      // Friends: your code, follow back, and who's going where.
+      GoRoute(
+        path: '/friends',
+        builder: (context, state) => const FriendsScreen(),
+      ),
+      GoRoute(
+        path: '/splits',
+        builder: (context, state) => const MySplitsScreen(),
+      ),
+      // Group booking links (https://…/split/CODE): pay your share.
+      GoRoute(
+        path: '/split/:code',
+        builder: (context, state) =>
+            SplitScreen(code: state.pathParameters['code']!),
       ),
       // Shared event links (https://…/e/CODE) land here when the app is installed.
       GoRoute(

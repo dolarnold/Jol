@@ -9,6 +9,12 @@ What changed in the JOL app, newest first. The version is `version:` in
 
 ## [Unreleased]
 
+### Added (social)
+- Friends: follow people; when you follow each other you're friends. Event cards and pages show which friends are going, with their photos. Profile → Friends has your friend code, people to follow back, and a switch to hide what you're going to.
+- The wall: every event page has a wall where guests going (and the host) post before the night. Hosts can remove posts; anyone can report one.
+- Sharing to WhatsApp sends the event link with its preview card (cover, name, date, price).
+- Split with friends: at checkout, book for the group and let each friend pay their own share. Places are held for 24 hours; if not everyone pays, everyone is refunded. Links (jolnow.co.za/split/…) open the app.
+
 ### Changed
 - The app talks to https://jolnow.co.za/api/v1. Shared event links on jolnow.co.za (and www) open the app; old links on the Laravel Cloud address still do.
 

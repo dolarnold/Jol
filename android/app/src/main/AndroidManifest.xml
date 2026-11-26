@@ -46,6 +46,7 @@
                 <data android:host="www.jolnow.co.za" />
                 <data android:host="jol-backend-production-xgp5ka.laravel.cloud" />
                 <data android:pathPrefix="/e/" />
+                <data android:pathPrefix="/split/" />
             </intent-filter>
         </activity>
         <!-- Google Maps key, set as GOOGLE_MAPS_API_KEY in android/local.properties. -->
